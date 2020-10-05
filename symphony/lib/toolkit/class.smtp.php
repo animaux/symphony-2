@@ -2,14 +2,6 @@
 /**
  * @package toolkit
  */
-
-/**
- * Exceptions to be thrown by the SMTP Client class
- */
-class SMTPException extends Exception
-{
-}
-
 /**
  * A SMTP client class, for sending text/plain emails.
  * This class only supports the very basic SMTP functions.
@@ -129,13 +121,16 @@ class SMTP
      * @param string $subject
      *  The subject to send the email to.
      * @param string $message
+     *  The message to send as an email
+     * @param array $options (optional)
+     *  An array of options that will be pass down to stream_context_create
      * @throws SMTPException
      * @throws Exception
      * @return boolean
      */
-    public function sendMail($from, $to, $message)
+    public function sendMail($from, $to, $message, $options = [])
     {
-        $this->_connect($this->_host, $this->_port);
+        $this->_connect($this->_host, $this->_port, $options);
         $this->mail($from);
 
         if (!is_array($to)) {
@@ -381,7 +376,7 @@ class SMTP
         if ($this->_secure == 'tls') {
             $this->_send('STARTTLS');
             $this->_expect(220, 180);
-            if (!stream_socket_enable_crypto($this->_connection, true, STREAM_CRYPTO_METHOD_TLS_CLIENT)) {
+            if (!stream_socket_enable_crypto($this->_connection, true, STREAM_CRYPTO_METHOD_TLSv1_2_CLIENT)) {
                 throw new SMTPException(__('Unable to connect via TLS'));
             }
             $this->_ehlo();
@@ -452,7 +447,6 @@ class SMTP
      */
     protected function _expect($code, $timeout = null)
     {
-        $this->_response = array();
         $cmd  = '';
         $more = '';
         $msg  = '';
@@ -475,6 +469,7 @@ class SMTP
         } while (strpos($more, '-') === 0); // The '-' message prefix indicates an information string instead of a response string.
 
         if ($errMsg !== '') {
+            $this->rset();
             throw new SMTPException($errMsg);
         }
 
@@ -484,14 +479,17 @@ class SMTP
     /**
      * Connect to the host, and perform basic functions like helo and auth.
      *
-     *
      * @param string $host
+     *  Host to connect to
      * @param integer $port
+     *  The port to connect to
+     * @param array $options (optional)
+     *  An array of options that will be pass down to stream_context_create
      * @throws SMTPException
      * @throws Exception
      * @return void
      */
-    protected function _connect($host, $port)
+    protected function _connect($host, $port, $options = [])
     {
         $errorNum = 0;
         $errorStr = '';
@@ -499,7 +497,8 @@ class SMTP
         $remoteAddr = $this->_transport . '://' . $host . ':' . $port;
 
         if (!is_resource($this->_connection)) {
-            $this->_connection = @stream_socket_client($remoteAddr, $errorNum, $errorStr, self::TIMEOUT);
+            $context = stream_context_create($options);
+            $this->_connection = stream_socket_client($remoteAddr, $errorNum, $errorStr, self::TIMEOUT, STREAM_CLIENT_CONNECT, $context);
 
             if ($this->_connection === false) {
                 if ($errorNum == 0) {

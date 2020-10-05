@@ -27,8 +27,11 @@
     define('DOCROOT', $clean_path);
 
     // Required boot components
-    define('VERSION', '2.7.0');
+    define('VERSION', '3.0.0');
     define('INSTALL', DOCROOT . '/install');
+
+    // Disable DB
+    define('SYMPHONY_LAUNCHER_NO_DB', true);
 
     // Include autoloader:
     require_once DOCROOT . '/vendor/autoload.php';
@@ -50,9 +53,9 @@
     if (file_exists(CONFIG)) {
         // System updater
         $script = Updater::instance();
-    }
+
     // If there's no config file, run the installer
-    else {
+    } else {
         // System installer
         $script = Installer::instance();
     }

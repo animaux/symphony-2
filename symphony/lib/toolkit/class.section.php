@@ -9,9 +9,10 @@
  * and are used as repositories for Entry objects, which are a model for this data
  * structure. This class contains functions for finding Fields within a Section and
  * saving a Section's settings.
+ *
+ * @since Symphony 3.0.0 it implements the ArrayAccess interface.
  */
-
-class Section
+class Section implements ArrayAccess
 {
     /**
      * An array of the Section's settings
@@ -54,16 +55,63 @@ class Section
     }
 
     /**
+     * Implementation of ArrayAccess::offsetExists()
+     *
+     * @param mixed $offset
+     * @return bool
+     */
+    public function offsetExists($offset)
+    {
+        return isset($this->_data[$offset]);
+    }
+
+    /**
+     * Implementation of ArrayAccess::offsetGet()
+     *
+     * @param mixed $offset
+     * @return mixed
+     */
+    public function offsetGet($offset)
+    {
+        return $this->_data[$offset];
+    }
+
+    /**
+     * Implementation of ArrayAccess::offsetSet()
+     *
+     * @param mixed $offset
+     * @param mixed $value
+     * @return void
+     */
+    public function offsetSet($offset, $value)
+    {
+        $this->_data[$offset] = $value;
+    }
+
+    /**
+     * Implementation of ArrayAccess::offsetUnset()
+     *
+     * @param mixed $offset
+     * @return void
+     */
+    public function offsetUnset($offset)
+    {
+        unset($this->_data[$offset]);
+    }
+
+    /**
      * Returns the default field this Section will be sorted by.
      * This is determined by the first visible field that is allowed to
      * to be sorted (defined by the field's `isSortable()` function).
      * If no fields exist or none of them are visible in the entries table,
-     * 'id' is returned instead.
+     * 'system:id' is returned instead.
      *
      * @since Symphony 2.3
+     * @since Symphony 3.0.0
+     *  Returns 'system:id' instead of 'id'
      * @throws Exception
      * @return string
-     *    Either the field ID or the string 'id'.
+     *  Either the field ID or the string 'system:id'.
      */
     public function getDefaultSortingField()
     {
@@ -74,10 +122,10 @@ class Section
                 continue;
             }
 
-            return $field->get('id');
+            return (string)$field->get('id');
         }
 
-        return 'id';
+        return 'system:id';
     }
 
     /**
@@ -88,13 +136,33 @@ class Section
      * @since Symphony 2.3
      * @throws Exception
      * @return string
-     *    Either the field ID or the string 'id'.
+     *  Either the field ID or the string 'id'.
      */
     public function getSortingField()
     {
-        $result = Symphony::Configuration()->get('section_' . $this->get('handle') . '_sortby', 'sorting');
+        $result = null;
+        /**
+         * Just prior to getting the configured sorting field.
+         *
+         * @delegate SectionGetSortingField
+         * @since Symphony 3.0.0
+         * @param string $context
+         * '/publish/'
+         * @param string $section-handle
+         *  The handle of the current section
+         * @param string &$field
+         *  The field as set by extensions
+         */
+        Symphony::ExtensionManager()->notifyMembers('SectionGetSortingField', '/publish/', array(
+            'section-handle' => $this->get('handle'),
+            'field' => &$result,
+        ));
 
-        return (is_null($result) ? $this->getDefaultSortingField() : $result);
+        if (!$result) {
+            $result = Symphony::Configuration()->get('section_' . $this->get('handle') . '_sortby', 'sorting');
+        }
+
+        return (!$result ? $this->getDefaultSortingField() : (string)$result);
     }
 
     /**
@@ -106,9 +174,29 @@ class Section
      */
     public function getSortingOrder()
     {
-        $result = Symphony::Configuration()->get('section_' . $this->get('handle') . '_order', 'sorting');
+        $result = null;
+        /**
+         * Just prior to getting the configured sorting order.
+         *
+         * @delegate SectionGetSortingOrder
+         * @since Symphony 3.0.0
+         * @param string $context
+         * '/publish/'
+         * @param string $section-handle
+         *  The handle of the current section
+         * @param string &$order
+         *  The order as set by extensions
+         */
+        Symphony::ExtensionManager()->notifyMembers('SectionGetSortingOrder', '/publish/', array(
+            'section-handle' => $this->get('handle'),
+            'order' => &$result
+        ));
 
-        return (is_null($result) ? 'asc' : $result);
+        if (!$result) {
+            $result = Symphony::Configuration()->get('section_' . $this->get('handle') . '_order', 'sorting');
+        }
+
+        return (!$result ? 'asc' : (string)$result);
     }
 
     /**
@@ -123,10 +211,34 @@ class Section
      */
     public function setSortingField($sort, $write = true)
     {
-        Symphony::Configuration()->set('section_' . $this->get('handle') . '_sortby', $sort, 'sorting');
+        $updated = false;
+        /**
+         * Just prior to setting the configured sorting field.
+         *
+         * @delegate SectionSetSortingField
+         * @since Symphony 3.0.0
+         * @param string $context
+         * '/publish/'
+         * @param string $section-handle
+         *  The handle of the current section
+         * @param string $field
+         *  The field as passed to the setSortingField function
+         * @param boolean $updated
+         *  The updated flag, set by extensions, which prevents the saving of the value
+         */
+        Symphony::ExtensionManager()->notifyMembers('SectionSetSortingField', '/publish/', array(
+            'section-handle' => $this->get('handle'),
+            'field' => $sort,
+            'updated' => &$updated,
+        ));
 
-        if ($write) {
-            Symphony::Configuration()->write();
+        // The delegate handled the request, don't set the default.
+        if (!$updated) {
+            Symphony::Configuration()->set('section_' . $this->get('handle') . '_sortby', $sort, 'sorting');
+
+            if ($write) {
+                Symphony::Configuration()->write();
+            }
         }
     }
 
@@ -142,10 +254,34 @@ class Section
      */
     public function setSortingOrder($order, $write = true)
     {
-        Symphony::Configuration()->set('section_' . $this->get('handle') . '_order', $order, 'sorting');
+        $updated = false;
+        /**
+         * Just prior to setting the configured sorting order.
+         *
+         * @delegate SectionSetSortingOrder
+         * @since Symphony 3.0.0
+         * @param string $context
+         * '/publish/'
+         * @param string $section-handle
+         *  The handle of the current section
+         * @param string $order
+         *  The order as passed to the setSortingOrder function
+         * @param boolean $updated
+         *  The updated flag, set by extensions, which prevents the saving of the value
+         */
+        Symphony::ExtensionManager()->notifyMembers('SectionSetSortingOrder', '/publish/', array(
+            'section-handle' => $this->get('handle'),
+            'order' => $order,
+            'updated' => &$updated,
+        ));
 
-        if ($write) {
-            Symphony::Configuration()->write();
+        // The delegate handled the request, don't set the default.
+        if (!$updated) {
+            Symphony::Configuration()->set('section_' . $this->get('handle') . '_order', $order, 'sorting');
+
+            if ($write) {
+                Symphony::Configuration()->write();
+            }
         }
     }
 
@@ -224,7 +360,13 @@ class Section
      */
     public function fetchVisibleColumns()
     {
-        return FieldManager::fetch(null, $this->get('id'), 'ASC', 'sortorder', null, null, " AND t1.show_column = 'yes' ");
+        return (new FieldManager)
+            ->select()
+            ->section($this->get('id'))
+            ->where(['show_column' => 'yes'])
+            ->sort('sortorder')
+            ->execute()
+            ->rows();
     }
 
     /**
@@ -241,7 +383,18 @@ class Section
      */
     public function fetchFields($type = null, $location = null)
     {
-        return FieldManager::fetch(null, $this->get('id'), 'ASC', 'sortorder', $type, $location);
+        $fieldQuery = (new FieldManager)
+            ->select()
+            ->section($this->get('id'))
+            ->sort('sortorder');
+
+        if ($type) {
+            $fieldQuery->type($type);
+        }
+        if ($location) {
+            $fieldQuery->location($location);
+        }
+        return $fieldQuery->execute()->rowsIndexedByColumn('id');
     }
 
     /**
@@ -255,7 +408,18 @@ class Section
      */
     public function fetchFilterableFields($location = null)
     {
-        return FieldManager::fetch(null, $this->get('id'), 'ASC', 'sortorder', null, $location, null, Field::__FILTERABLE_ONLY__);
+        $fieldQuery = (new FieldManager)
+            ->select()
+            ->section($this->get('id'))
+            ->sort('sortorder');
+
+        if ($location) {
+            $fieldQuery->location($location);
+        }
+        return $fieldQuery
+            ->execute()
+            ->restrict(Field::__FILTERABLE_ONLY__)
+            ->rows();
     }
 
     /**
@@ -271,7 +435,18 @@ class Section
      */
     public function fetchToggleableFields($location = null)
     {
-        return FieldManager::fetch(null, $this->get('id'), 'ASC', 'sortorder', null, $location, null, Field::__TOGGLEABLE_ONLY__);
+        $fieldQuery = (new FieldManager)
+            ->select()
+            ->section($this->get('id'))
+            ->sort('sortorder');
+
+        if ($location) {
+            $fieldQuery->location($location);
+        }
+        return $fieldQuery
+            ->execute()
+            ->restrict(Field::__TOGGLEABLE_ONLY__)
+            ->rows();
     }
 
     /**
@@ -309,13 +484,6 @@ class Section
             }
         } else {
             $section_id = SectionManager::add($settings);
-        }
-
-        if (is_numeric($section_id) && $section_id !== false) {
-            for ($ii = 0, $length = count($this->_fields); $ii < $length; $ii++) {
-                $this->_fields[$ii]->set('parent_section', $section_id);
-                $this->_fields[$ii]->commit();
-            }
         }
     }
 }

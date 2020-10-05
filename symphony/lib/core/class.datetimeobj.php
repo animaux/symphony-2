@@ -38,7 +38,6 @@ class DateTimeObj
         'Y-m-d' => 'YYYY-MM-DD',    // e. g. 2014-01-02
         'm-d-Y' => 'MM-DD-YYYY',    // e. g. 01-02-2014
         'm-d-y' => 'MM-DD-YY',      // e. g. 01-02-14
-        'd.m.Y' => 'DD.MM.YYYY',    // e. g. 02.01.2014
         'j.n.Y' => 'D.M.YYYY',      // e. g. 2.1.2014 - no leading zeros
         'j.n.y' => 'D.M.YY',        // e. g. 2.1.14 - no leading zeros
         'd.m.Y' => 'DD.MM.YYYY',    // e. g. 02.01.2014
@@ -139,18 +138,19 @@ class DateTimeObj
 
     /**
      * Uses PHP's date_default_timezone_set function to set the system
-     * timezone. If the timezone provided is invalid, a `E_USER_WARNING` will be
-     * raised.
+     * timezone. If the timezone provided is invalid, an exception is thrown.
      *
      * @link http://php.net/manual/en/function.date-default-timezone-set.php
      * @link http://www.php.net/manual/en/timezones.php
      * @param string $timezone
      *  A valid timezone identifier, such as UTC or Europe/Lisbon
+     * @throws Exception
+     *  If the timezone is not valid.
      */
     public static function setDefaultTimezone($timezone)
     {
         if (!@date_default_timezone_set($timezone)) {
-            trigger_error(__('Invalid timezone %s', array($timezone)), E_USER_WARNING);
+            throw new Exception(__('Invalid timezone %s', array($timezone)));
         }
     }
 

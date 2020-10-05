@@ -25,8 +25,9 @@ abstract class XMLPage extends TextPage
      */
     public function __construct()
     {
-        $this->_Result = new XMLElement('result');
-        $this->_Result->setIncludeHeader(true);
+        parent::__construct();
+        $this->_Result = new XMLDocument('result');
+        $this->_Result->renderHeader();
 
         $this->setHttpStatus(self::HTTP_STATUS_OK);
         $this->addHeaderToPage('Content-Type', 'text/xml');

@@ -4,29 +4,24 @@
      * @package boot
      */
 
-    // Set appropriate error reporting:
-    error_reporting(E_ALL & ~E_NOTICE & ~E_DEPRECATED & ~E_STRICT);
-
-    // Turn off old-style magic:
-    ini_set('magic_quotes_runtime', false);
-
     // Redirect to installer if it exists
     if (!file_exists(CONFIG)) {
         $bInsideInstaller = (bool)preg_match('%(/|\\\\)install(/|\\\\)index.php$%', server_safe('SCRIPT_FILENAME'));
 
         if (!$bInsideInstaller && Symphony::isInstallerAvailable()) {
-            header(sprintf('Location: %s/install/', URL));
+            redirect(URL . '/install/');
             exit;
         } elseif (!$bInsideInstaller) {
             die('<h2>Error</h2><p>Could not locate Symphony configuration file. Please check <code>manifest/config.php</code> exists.</p>');
         }
     } else {
+        // Start with the Exception handler disable before authentication.
+        // This limits the possibility of leaking infos.
+        ExceptionHandler::$enabled = false;
+
         // Load configuration file:
         include CONFIG;
         Symphony::initialiseConfiguration($settings);
-        Symphony::initialiseErrorHandler();
-        Symphony::initialiseDatabase();
-        Symphony::initialiseExtensionManager();
 
         // Report all errors
         if (Symphony::Configuration()->get('error_reporting_all', 'symphony') === 'yes') {
@@ -58,15 +53,34 @@
         define_safe('SYMPHONY_URL', URL . '/' . $adminPath);
 
         /**
-         * Overload the default Symphony launcher logic.
-         * @delegate ModifySymphonyLauncher
-         * @since Symphony 2.5.0
-         * @param string $context
-         * '/all/'
+         * Returns the app mode
+         * @since Symphony 3.0.0
          */
-        Symphony::ExtensionManager()->notifyMembers(
-            'ModifySymphonyLauncher', '/all/'
-        );
+        define_safe('APP_MODE', (
+            isset($_GET['mode'])
+                ? $_GET['mode']
+                : 'frontend'
+        ));
+
+        // Set up error handler
+        Symphony::initialiseErrorHandler();
+
+        // Set up database and extensions
+        if (!defined('SYMPHONY_LAUNCHER_NO_DB')) {
+            Symphony::initialiseDatabase();
+            Symphony::initialiseExtensionManager();
+
+            /**
+             * Overload the default Symphony launcher logic.
+             * @delegate ModifySymphonyLauncher
+             * @since Symphony 2.5.0
+             * @param string $context
+             * '/all/'
+             */
+            Symphony::ExtensionManager()->notifyMembers(
+                'ModifySymphonyLauncher', '/all/'
+            );
+        }
 
         // Use default launcher:
         if (defined('SYMPHONY_LAUNCHER') === false) {

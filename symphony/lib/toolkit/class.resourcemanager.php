@@ -150,7 +150,7 @@ class ResourceManager
      * @param string $order_by (optional)
      *  Allows a developer to return the resources in a particular order. The syntax is the
      *  same as other `fetch` methods. If omitted this will return resources ordered by `name`.
-     * @throws SymphonyErrorPage
+     * @throws SymphonyException
      * @throws Exception
      * @return array
      *  An associative array of resource information, formatted in the same way as the resource's
@@ -169,9 +169,13 @@ class ResourceManager
         foreach ($resources as &$r) {
             // If source is numeric, it's considered to be a Symphony Section
             if (isset($r['source']) && General::intval($r['source']) > 0) {
-                $section = SectionManager::fetch($r['source']);
+                $section = (new SectionManager)
+                    ->select()
+                    ->section($r['source'])
+                    ->execute()
+                    ->next();
 
-                if ($section !== false) {
+                if ($section) {
                     $r['source'] = array(
                         'name' => General::sanitize($section->get('name')),
                         'handle' => General::sanitize($section->get('handle')),
@@ -305,24 +309,23 @@ class ResourceManager
     {
         $col = self::getColumnFromType($type);
 
-        $pages = PageManager::fetch(false, array('id'), array(sprintf(
-            '`%s` = "%s" OR `%s` REGEXP "%s"',
-            $col,
-            $r_handle,
-            $col,
-            '^' . $r_handle . ',|,' . $r_handle . ',|,' . $r_handle . '$'
-        )));
+        $pages = (new PageManager)
+            ->select(['id'])
+            ->where(['or' => [
+                [$col => $r_handle],
+                [$col => ['regexp' => '^' . $r_handle . ',|,' . $r_handle . ',|,' . $r_handle . '$']],
+            ]])
+            ->execute()
+            ->rows();
 
-        if (is_array($pages)) {
-            foreach ($pages as $key => &$page) {
-                $pages[$key] = array(
-                    'id' => $page['id'],
-                    'title' => PageManager::resolvePageTitle($page['id'])
-                );
-            }
+        foreach ($pages as $key => &$page) {
+            $pages[$key] = array(
+                'id' => $page['id'],
+                'title' => PageManager::resolvePageTitle($page['id'])
+            );
         }
 
-        return (is_null($pages) ? array() : $pages);
+        return $pages;
     }
 
     /**
@@ -341,14 +344,10 @@ class ResourceManager
     {
         $col = self::getColumnFromType($type);
 
-        $pages = PageManager::fetch(false, array($col), array(sprintf(
-            '`id` = %d',
-            $page_id
-        )));
+        $page = (new PageManager)->select([$col])->page($page_id)->execute()->next();
 
-        if (is_array($pages) && count($pages) == 1) {
-            $result = $pages[0][$col];
-
+        if ($page) {
+            $result = $page[$col];
             if (!in_array($r_handle, explode(',', $result))) {
                 if (strlen($result) > 0) {
                     $result .= ',';
@@ -357,7 +356,7 @@ class ResourceManager
                 $result .= $r_handle;
 
                 return PageManager::edit($page_id, array(
-                    $col => MySQL::cleanValue($result)
+                    $col => $result
                 ));
             }
         }
@@ -381,13 +380,14 @@ class ResourceManager
     {
         $col = self::getColumnFromType($type);
 
-        $pages = PageManager::fetch(false, array($col), array(sprintf(
-            '`id` = %d',
-            $page_id
-        )));
+        $page = (new PageManager)
+            ->select([$col])
+            ->page($page_id)
+            ->execute()
+            ->next();
 
-        if (is_array($pages) && count($pages) == 1) {
-            $result = $pages[0][$col];
+        if ($page) {
+            $result = $page[$col];
 
             $values = explode(',', $result);
             $idx = array_search($r_handle, $values, false);
@@ -396,9 +396,9 @@ class ResourceManager
                 array_splice($values, $idx, 1);
                 $result = implode(',', $values);
 
-                return PageManager::edit($page_id, array(
-                    $col => MySQL::cleanValue($result)
-                ));
+                return PageManager::edit($page_id, [
+                    $col => $result,
+                ]);
             }
         }
 

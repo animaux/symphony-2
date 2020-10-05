@@ -2,7 +2,8 @@
  * @package assets
  */
 
-(function($, Symphony) {
+(function($) {
+	'use strict';
 
 	/**
 	 * Create selectable elements. Clicking an item will select it
@@ -20,7 +21,7 @@
 	 * @param {String} [options.items='tbody tr:has(input)'] Selector to find items that are selectable
 	 * item. Needed to properly handle item highlighting when used in connection with the orderable plugin
 	 * @param {String} [options.ignore='a'] Selector to find elements that should not propagate to the handle
-	 * @param {String} [optinos.mode='single'] Either 'default' (click removes other selections) or 'additive' (click adds to exisiting selection)
+	 * @param {String} [options.mode='single'] Either 'default' (click removes other selections) or 'additive' (click adds to exisiting selection)
 	 *
 	 * @example
 
@@ -111,7 +112,7 @@
 		});
 
 		// Remove all selections by doubleclicking the body
-		$('body').bind('dblclick.selectable', function removeAllSelection() {
+		$('body').on('dblclick.selectable', function removeAllSelection() {
 			objects.find(settings.items).removeClass('selected').trigger('deselect.selectable');
 		});
 
@@ -127,4 +128,4 @@
 		return objects;
 	};
 
-})(window.jQuery, window.Symphony);
+})(window.jQuery);

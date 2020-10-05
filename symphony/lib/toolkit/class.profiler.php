@@ -92,7 +92,7 @@ class Profiler implements Singleton
      * @param string $group
      *  Allows samples to be grouped together, defaults to General.
      * @param integer $queries
-     *  The number of MySQL queries that occurred since the `$_starttime` or `$_seed`
+     *  The number of Database queries that occurred since the `$_starttime` or `$_seed`
      */
     public function sample($msg, $type = PROFILE_RUNNING_TOTAL, $group = 'General', $queries = null)
     {
@@ -182,9 +182,7 @@ class Profiler implements Singleton
      */
     public function retrieveTotalRunningTime()
     {
-        $last = Profiler::retrieveLast();
-
-        return $last[1];
+        return precision_timer('stop', Profiler::$_starttime);
     }
 
     /**

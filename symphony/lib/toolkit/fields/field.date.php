@@ -12,14 +12,35 @@
  */
 class FieldDate extends Field implements ExportableField, ImportableField
 {
+    /**
+     * @deprecated @since Symphony 3.0.0
+     */
     const SIMPLE = 0;
+    /**
+     * @deprecated @since Symphony 3.0.0
+     */
     const REGEXP = 1;
+    /**
+     * @deprecated @since Symphony 3.0.0
+     */
     const RANGE = 3;
+    /**
+     * @deprecated @since Symphony 3.0.0
+     */
     const ERROR = 4;
 
+    /**
+     * @deprecated @since Symphony 3.0.0
+     */
     private $key;
 
+    /**
+     * @deprecated @since Symphony 3.0.0
+     */
     protected static $min_date = '1000-01-01 00:00:00';
+    /**
+     * @deprecated @since Symphony 3.0.0
+     */
     protected static $max_date = '9999-12-31 23:59:59';
 
     public function __construct()
@@ -28,6 +49,7 @@ class FieldDate extends Field implements ExportableField, ImportableField
         $this->_name = __('Date');
         $this->_required = true;
         $this->key = 1;
+        $this->entryQueryFieldAdapter = new EntryQueryDateAdapter($this);
 
         $this->set('pre_populate', 'now');
         $this->set('required', 'no');
@@ -125,18 +147,27 @@ class FieldDate extends Field implements ExportableField, ImportableField
 
     public function createTable()
     {
-        return Symphony::Database()->query(
-            "CREATE TABLE IF NOT EXISTS `tbl_entries_data_" . $this->get('id') . "` (
-              `id` int(11) unsigned NOT null auto_increment,
-              `entry_id` int(11) unsigned NOT null,
-              `value` varchar(80) default null,
-              `date` DATETIME default null,
-              PRIMARY KEY  (`id`),
-              UNIQUE KEY `entry_id` (`entry_id`),
-              KEY `value` (`value`),
-              KEY `date` (`date`)
-            ) ENGINE=MyISAM DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;"
-        );
+        return Symphony::Database()
+            ->create('tbl_entries_data_' . General::intval($this->get('id')))
+            ->ifNotExists()
+            ->fields([
+                'id' => [
+                    'type' => 'int(11)',
+                    'auto' => true,
+                ],
+                'entry_id' => 'int(11)',
+                'value' => [
+                    'type' => 'varchar(80)',
+                    'null' => true,
+                ],
+            ])
+            ->keys([
+                'id' => 'primary',
+                'entry_id' => 'unique',
+                'value' => 'key',
+            ])
+            ->execute()
+            ->success();
     }
 
     /*-------------------------------------------------------------------------
@@ -148,6 +179,8 @@ class FieldDate extends Field implements ExportableField, ImportableField
      * The strings should be in ISO8601 style format, or a natural date, such
      * as 'last week' etc.
      *
+     * @deprecated @since Symphony 3.0.0
+     *  Use DateRangeParser class instead
      * @since Symphony 2.2.2
      * @param array $string
      *  The date string to be parsed
@@ -175,7 +208,7 @@ class FieldDate extends Field implements ExportableField, ImportableField
 
             $parts = self::isEqualTo($parts, $direction, $equal_to);
 
-            // Year/Month/Day/Time
+        // Year/Month/Day/Time
         } elseif (preg_match('/^\d{1,4}[-\/]\d{1,2}[-\/]\d{1,2}\s\d{1,2}:\d{2}/', $string, $matches)) {
             // Handles the case of `to` filters
             if ($equal_to || is_null($direction)) {
@@ -185,7 +218,7 @@ class FieldDate extends Field implements ExportableField, ImportableField
                 $parts['end'] = DateTimeObj::get('Y-m-d H:i:s', $string . ' + 1 second');
             }
 
-            // Year/Month/Day
+        // Year/Month/Day
         } elseif (preg_match('/^\d{1,4}[-\/]\d{1,2}[-\/]\d{1,2}$/', $string, $matches)) {
             $year_month_day = current($matches);
 
@@ -194,7 +227,7 @@ class FieldDate extends Field implements ExportableField, ImportableField
 
             $parts = self::isEqualTo($parts, $direction, $equal_to);
 
-            // Year/Month
+        // Year/Month
         } elseif (preg_match('/^\d{1,4}[-\/]\d{1,2}$/', $string, $matches)) {
             $year_month = current($matches);
 
@@ -203,10 +236,9 @@ class FieldDate extends Field implements ExportableField, ImportableField
 
             $parts = self::isEqualTo($parts, $direction, $equal_to);
 
-            // Relative date, aka '+ 3 weeks'
+        // Relative date, aka '+ 3 weeks'
         } else {
             // Handles the case of `to` filters
-
             if ($equal_to || is_null($direction)) {
                 $parts['start'] = $parts['end'] = DateTimeObj::get('Y-m-d H:i:s', $string);
             } else {
@@ -223,6 +255,8 @@ class FieldDate extends Field implements ExportableField, ImportableField
      * the filter as well, ie. later than 2011, is effectively the same as
      * equal to or later than 2012.
      *
+     * @deprecated @since Symphony 3.0.0
+     *  Use DateRangeParser class instead
      * @since Symphony 2.2.2
      * @param array $parts
      *  An associative array containing a date in ISO8601 format (or natural)
@@ -248,6 +282,13 @@ class FieldDate extends Field implements ExportableField, ImportableField
         return $parts;
     }
 
+    /**
+     * @deprecated @since Symphony 3.0.0
+     * Use EntryQueryAuthorAdapter class instead
+     *
+     * @param string $string
+     * @return int
+     */
     public static function parseFilter(&$string)
     {
         $string = self::cleanFilterString($string);
@@ -279,6 +320,9 @@ class FieldDate extends Field implements ExportableField, ImportableField
                     $string = self::$min_date . ' to ' . $earlier;
                     break;
             }
+        } elseif (preg_match('/IS( NOT)? NULL/i', $string)) {
+            $string = array('start' => $string, 'end' => $string);
+            return self::RANGE;
 
             // Look to see if its a shorthand date (year only), and convert to full date
             // Look to see if the give date is a shorthand date (year and month) and convert it to full date
@@ -333,6 +377,13 @@ class FieldDate extends Field implements ExportableField, ImportableField
         return self::RANGE;
     }
 
+    /**
+     * @deprecated @since Symphony 3.0.0
+     * Use EntryQueryAuthorAdapter class instead
+     *
+     * @param string $string
+     * @return string
+     */
     public static function cleanFilterString($string)
     {
         $string = trim($string, ' -/');
@@ -340,6 +391,15 @@ class FieldDate extends Field implements ExportableField, ImportableField
         return urldecode($string);
     }
 
+    /**
+     * @deprecated @since Symphony 3.0.0
+     *
+     * @param array $data
+     * @param string $joins
+     * @param string $where
+     * @param boolean $andOperation
+     * @return void
+     */
     public function buildRangeFilterSQL($data, &$joins, &$where, $andOperation = false)
     {
         $field_id = $this->get('id');
@@ -485,10 +545,6 @@ class FieldDate extends Field implements ExportableField, ImportableField
         $label->appendChild(Widget::Input("fields{$fieldnamePrefix}[{$name}]", $value));
         $label->setAttribute('class', 'date');
 
-        if (!is_null($flagWithError)) {
-            $label = Widget::Error($label, $flagWithError);
-        }
-
         // Calendar
         if ($this->get('calendar') === 'yes') {
             $wrapper->setAttribute('data-interactive', 'data-interactive');
@@ -505,6 +561,10 @@ class FieldDate extends Field implements ExportableField, ImportableField
             $label->appendChild($ul);
         }
 
+        // Wrap label in error
+        if (!is_null($flagWithError)) {
+            $label = Widget::Error($label, $flagWithError);
+        }
         $wrapper->appendChild($label);
     }
 
@@ -549,16 +609,14 @@ class FieldDate extends Field implements ExportableField, ImportableField
 
         // Valid date
         if (!is_null($timestamp)) {
-            return array(
+            return  [
                 'value' => DateTimeObj::get('c', $timestamp),
-                'date' => DateTimeObj::getGMT('Y-m-d H:i:s', $timestamp)
-            );
+            ];
 
             // Invalid date
         } else {
             return array(
-                'value' => null,
-                'date' => null
+                'value' => null
             );
         }
     }
@@ -706,8 +764,18 @@ class FieldDate extends Field implements ExportableField, ImportableField
         Filtering:
     -------------------------------------------------------------------------*/
 
+    /**
+     * @deprecated @since Symphony 3.0.0
+     * @see Field::buildDSRetrievalSQL()
+     */
     public function buildDSRetrievalSQL($data, &$joins, &$where, $andOperation = false)
     {
+        if (Symphony::Log()) {
+            Symphony::Log()->pushDeprecateWarningToLog(
+                get_called_class() . '::buildDSRetrievalSQL()',
+                'EntryQueryFieldAdapter::filter()'
+            );
+        }
         if (self::isFilterRegex($data[0])) {
             $this->buildRegexSQL($data[0], array('value'), $joins, $where);
         } elseif (self::isFilterSQL($data[0])) {
@@ -742,8 +810,18 @@ class FieldDate extends Field implements ExportableField, ImportableField
         Sorting:
     -------------------------------------------------------------------------*/
 
+    /**
+     * @deprecated @since Symphony 3.0.0
+     * @see Field::buildSortingSQL()
+     */
     public function buildSortingSQL(&$joins, &$where, &$sort, $order = 'ASC')
     {
+        if (Symphony::Log()) {
+            Symphony::Log()->pushDeprecateWarningToLog(
+                get_called_class() . '::buildSortingSQL()',
+                'EntryQueryFieldAdapter::sort()'
+            );
+        }
         if ($this->isRandomOrder($order)) {
             $sort = 'ORDER BY RAND()';
         } else {
@@ -752,16 +830,27 @@ class FieldDate extends Field implements ExportableField, ImportableField
                     SELECT %s
                     FROM tbl_entries_data_%d AS `ed`
                     WHERE entry_id = e.id
-                ) %s',
+                ) %s, `e`.`id` %s',
                 '`ed`.date',
                 $this->get('id'),
+                $order,
                 $order
             );
         }
     }
 
+    /**
+     * @deprecated @since Symphony 3.0.0
+     * @see Field::buildSortingSelectSQL()
+     */
     public function buildSortingSelectSQL($sort, $order = 'ASC')
     {
+        if (Symphony::Log()) {
+            Symphony::Log()->pushDeprecateWarningToLog(
+                get_called_class() . '::buildSortingSelectSQL()',
+                'EntryQueryFieldAdapter::sort()'
+            );
+        }
         return null;
     }
 

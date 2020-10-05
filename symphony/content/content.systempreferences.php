@@ -13,8 +13,6 @@
 
 class contentSystemPreferences extends AdministrationPage
 {
-    public $_errors = array();
-
     // Overload the parent 'view' function since we dont need the switchboard logic
     public function view()
     {
@@ -198,8 +196,7 @@ class contentSystemPreferences extends AdministrationPage
         Symphony::ExtensionManager()->notifyMembers('CustomActions', '/system/preferences/');
 
         if (isset($_POST['action']['save'])) {
-            $settings = filter_var_array($_POST['settings'], FILTER_SANITIZE_STRING);
-
+            $settings = filter_var_array($_POST['settings'], FILTER_UNSAFE_RAW, FILTER_FLAG_STRIP_LOW);
             /**
              * Just prior to saving the preferences and writing them to the `CONFIG`
              * Allows extensions to preform custom validation logic on the settings.
@@ -223,10 +220,6 @@ class contentSystemPreferences extends AdministrationPage
                 }
 
                 if (Symphony::Configuration()->write()) {
-                    if (function_exists('opcache_invalidate')) {
-                        opcache_invalidate(CONFIG, true);
-                    }
-
                     redirect(SYMPHONY_URL . '/system/preferences/success/');
                 }
             }

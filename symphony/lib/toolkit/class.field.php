@@ -9,8 +9,10 @@
  * instances of this field type have been used in other sections and their settings.
  * They also spinoff other `tbl_entry_data_{id}` tables that actually store data for
  * entries particular to this field.
+ *
+ * @since Symphony 3.0.0 it implements the ArrayAccess interface.
  */
-class Field
+class Field implements ArrayAccess
 {
     /**
      * The desired result when creating a field in the section editor
@@ -91,9 +93,22 @@ class Field
 
     /**
      * Used to manage the joins when this field used in a datasource
+     * @deprecated @since Symphony 3.0.0
      * @var integer
      */
     protected $_key = 0;
+
+    /**
+     * The handle of this field object
+     * @var string
+     */
+    protected $_handle = null;
+
+    /**
+     * The name of this field object
+     * @var string
+     */
+    protected $_name = null;
 
     /**
      * An associative array of the settings for this `Field` instance
@@ -125,11 +140,33 @@ class Field
     protected $_showassociation = false;
 
     /**
+     * The entry query field adapter object, responsible for filter and sort.
+     * The default class does not set a default EntryQueryFieldAdapter object
+     * to allow the compatibility layer to work. In later versions, this can change.
+     * @since Symphony 3.0.0
+     * @var EntryQueryFieldAdapter
+     */
+    protected $entryQueryFieldAdapter = null;
+
+    /**
      * Construct a new instance of this field.
      */
     public function __construct()
     {
         $this->_handle = (strtolower(get_class($this)) == 'field' ? 'field' : strtolower(substr(get_class($this), 5)));
+    }
+
+    /**
+     * Adjust the newly cloned field in order to fix circular references.
+     *
+     * @return void
+     */
+    public function __clone()
+    {
+        if ($this->entryQueryFieldAdapter) {
+            $eqfaClass = get_class($this->entryQueryFieldAdapter);
+            $this->entryQueryFieldAdapter = new $eqfaClass($this);
+        }
     }
 
     /**
@@ -264,13 +301,13 @@ class Field
     }
 
     /**
-     * Test whether this field supports data-source output grouping. This
+     * Test whether this field supports data source output grouping. This
      * default implementation prohibits grouping. Data-source grouping allows
      * clients of this field to group the XML output according to this field.
      * Subclasses should override this if grouping is supported.
      *
      * @return boolean
-     *  true if this field does support data-source grouping, false otherwise.
+     *  true if this field does support data source grouping, false otherwise.
      */
     public function allowDatasourceOutputGrouping()
     {
@@ -292,14 +329,14 @@ class Field
     }
 
     /**
-     * Test whether this field supports data-source parameter output. This
+     * Test whether this field supports data source parameter output. This
      * default implementation prohibits parameter output. Data-source
      * parameter output allows this field to be provided as a parameter
-     * to other data-sources or XSLT. Subclasses should override this if
+     * to other data sources or XSLT. Subclasses should override this if
      * parameter output is supported.
      *
      * @return boolean
-     *  true if this supports data-source parameter output, false otherwise.
+     *  true if this supports data source parameter output, false otherwise.
      */
     public function allowDatasourceParamOutput()
     {
@@ -334,8 +371,7 @@ class Field
     }
 
     /**
-     * Clean the input value using html entity encode and the database specific
-     * clean methods.
+     * Clean the input value using html entity encode.
      *
      * @param mixed $value
      *  the value to clean.
@@ -344,7 +380,7 @@ class Field
      */
     public function cleanValue($value)
     {
-        return html_entity_decode(Symphony::Database()->cleanValue($value));
+        return html_entity_decode($value);
     }
 
     /**
@@ -436,6 +472,63 @@ class Field
         unset($this->_settings[$setting]);
     }
 
+
+    /**
+     * Implementation of ArrayAccess::offsetExists()
+     *
+     * @param mixed $offset
+     * @return bool
+     */
+    public function offsetExists($offset)
+    {
+        return isset($this->_settings[$offset]);
+    }
+
+    /**
+     * Implementation of ArrayAccess::offsetGet()
+     *
+     * @param mixed $offset
+     * @return mixed
+     */
+    public function offsetGet($offset)
+    {
+        return $this->_settings[$offset];
+    }
+
+    /**
+     * Implementation of ArrayAccess::offsetSet()
+     *
+     * @param mixed $offset
+     * @param mixed $value
+     * @return void
+     */
+    public function offsetSet($offset, $value)
+    {
+        $this->_settings[$offset] = $value;
+    }
+
+    /**
+     * Implementation of ArrayAccess::offsetUnset()
+     *
+     * @param mixed $offset
+     * @return void
+     */
+    public function offsetUnset($offset)
+    {
+        unset($this->_settings[$offset]);
+    }
+
+    /**
+     * Getter for this field's EntryQuery operations object.
+     *
+     * @since Symphony 3.0.0
+     * @return EntryQueryFieldAdapter
+     */
+    public function getEntryQueryFieldAdapter()
+    {
+        return $this->entryQueryFieldAdapter;
+    }
+
     /**
      * Just prior to the field being deleted, this function allows
      * Fields to cleanup any additional things before it is removed
@@ -475,7 +568,11 @@ class Field
     {
         // Create header
         $location = ($this->get('location') ? $this->get('location') : 'main');
-        $header = new XMLElement('header', null, array('class' => 'frame-header ' . $location, 'data-name' => $this->name()));
+        $header = new XMLElement('header', null, array(
+            'class' => 'frame-header ' . $location,
+            'data-name' => $this->name(),
+            'title' => $this->get('id'),
+        ));
         $label = (($this->get('label')) ? $this->get('label') : __('New Field'));
         $header->appendChild(new XMLElement('h4', '<strong>' . $label . '</strong> <span class="type">' . $this->name() . '</span>'));
         $wrapper->appendChild($header);
@@ -905,23 +1002,20 @@ class Field
         $label = $this->get('label');
         $element_name = $this->get('element_name');
 
-        if (Lang::isUnicodeCompiled()) {
-            $valid_name = preg_match('/^[\p{L}]([0-9\p{L}\.\-\_]+)?$/u', $element_name);
-        } else {
-            $valid_name = preg_match('/^[A-z]([\w\d-_\.]+)?$/i', $element_name);
-        }
-
         if ($label === '') {
             $errors['label'] = __('This is a required field.');
         } elseif (strtolower($label) === 'id') {
             $errors['label'] = __('%s is a reserved name used by the system and is not allowed for a field handle. Try using %s instead.', array('<code>ID</code>', '<code>UID</code>'));
+        // Check label starts with a letter
+        } elseif (!preg_match('/^\p{L}/u', $label)) {
+            $errors['label'] = __('The label of the field must begin with a letter.');
         }
 
         if ($element_name === '') {
             $errors['element_name'] = __('This is a required field.');
         } elseif ($element_name === 'id') {
             $errors['element_name'] = __('%s is a reserved name used by the system and is not allowed for a field handle. Try using %s instead.', array('<code>id</code>', '<code>uid</code>'));
-        } elseif (!$valid_name) {
+        } elseif (!preg_match('/^[a-z]/i', $element_name)) {
             $errors['element_name'] = __('Invalid element name. Must be valid %s.', array('<code>QName</code>'));
         } elseif ($checkForDuplicates) {
             if (FieldManager::fetchFieldIDFromElementName($element_name, $parent_section) !== $this->get('id')) {
@@ -1238,7 +1332,7 @@ class Field
     }
 
     /**
-     * Display the default data-source filter panel.
+     * Display the default data source filter panel.
      *
      * @param XMLElement $wrapper
      *    the input XMLElement to which the display of this will be appended.
@@ -1321,6 +1415,8 @@ class Field
      * Test whether the input string is a regular expression, by searching
      * for the prefix of `regexp:` or `not-regexp:` in the given `$string`.
      *
+     * @deprecated @since Symphony 3.0.0
+     *  Use EntryQueryFieldAdapter::isFilterRegex() instead
      * @param string $string
      *  The string to test.
      * @return boolean
@@ -1328,6 +1424,12 @@ class Field
      */
     protected static function isFilterRegex($string)
     {
+        if (Symphony::Log()) {
+            Symphony::Log()->pushDeprecateWarningToLog(
+                get_called_class() . '::isFilterRegex()',
+                'EntryQueryFieldAdapter::isFilterRegex()'
+            );
+        }
         if (preg_match('/^regexp:/i', $string) || preg_match('/^not-?regexp:/i', $string)) {
             return true;
         }
@@ -1340,6 +1442,8 @@ class Field
      * flavours differs at times.
      *
      * @since Symphony 2.3
+     * @deprecated @since Symphony 3.0.0
+     *  Use EntryQueryFieldAdapter::createFilterRegexp() instead
      * @link https://dev.mysql.com/doc/refman/en/regexp.html
      * @param string $filter
      *  The full filter, eg. `regexp: ^[a-d]`
@@ -1358,6 +1462,12 @@ class Field
      */
     public function buildRegexSQL($filter, array $columns, &$joins, &$where)
     {
+        if (Symphony::Log()) {
+            Symphony::Log()->pushDeprecateWarningToLog(
+                get_called_class() . '::buildRegexSQL()',
+                'EntryQueryFieldAdapter::createFilterRegexp()'
+            );
+        }
         $this->_key++;
         $field_id = $this->get('id');
         $filter = $this->cleanValue($filter);
@@ -1402,6 +1512,8 @@ class Field
      * for the prefix of `sql:` in the given `$string`, followed by `(NOT )? NULL`
      *
      * @since Symphony 2.7.0
+     * @deprecated @since Symphony 3.0.0
+     *  Use EntryQueryFieldAdapter::isFilterSQL() instead
      * @param string $string
      *  The string to test.
      * @return boolean
@@ -1409,6 +1521,12 @@ class Field
      */
     protected static function isFilterSQL($string)
     {
+        if (Symphony::Log()) {
+            Symphony::Log()->pushDeprecateWarningToLog(
+                get_called_class() . '::isFilterSQL()',
+                'EntryQueryFieldAdapter::isFilterSQL()'
+            );
+        }
         if (preg_match('/^sql:\s*(NOT )?NULL$/i', $string)) {
             return true;
         }
@@ -1419,6 +1537,8 @@ class Field
      *  This function supports `sql: NULL` or `sql: NOT NULL`.
      *
      * @since Symphony 2.7.0
+     * @deprecated @since Symphony 3.0.0
+     *  Use EntryQueryFieldAdapter::createFilterSQL() instead
      * @link https://dev.mysql.com/doc/refman/en/regexp.html
      * @param string $filter
      *  The full filter, eg. `sql: NULL`
@@ -1436,6 +1556,12 @@ class Field
      */
     public function buildFilterSQL($filter, array $columns, &$joins, &$where)
     {
+        if (Symphony::Log()) {
+            Symphony::Log()->pushDeprecateWarningToLog(
+                get_called_class() . '::buildFilterSQL()',
+                'EntryQueryFieldAdapter::createFilterSQL()'
+            );
+        }
         $this->_key++;
         $field_id = $this->get('id');
         $filter = $this->cleanValue($filter);
@@ -1472,7 +1598,8 @@ class Field
      * Construct the SQL statement fragments to use to retrieve the data of this
      * field when utilized as a data source.
      *
-     * @see toolkit.Datasource#__determineFilterType
+     * @deprecated @since Symphony 3.0.0
+     *  Use EntryQueryFieldAdapter::filter() instead
      * @param array $data
      *  An array of the data that contains the values for the filter as specified
      *  in the datasource editor. The value that is entered in the datasource editor
@@ -1494,6 +1621,12 @@ class Field
      */
     public function buildDSRetrievalSQL($data, &$joins, &$where, $andOperation = false)
     {
+        if (Symphony::Log()) {
+            Symphony::Log()->pushDeprecateWarningToLog(
+                get_called_class() . '::buildDSRetrievalSQL()',
+                'EntryQueryFieldAdapter::filter()'
+            );
+        }
         $field_id = $this->get('id');
 
         // REGEX filtering is a special case, and will only work on the first item
@@ -1547,6 +1680,8 @@ class Field
      * Determine if the requested $order is random or not.
      *
      * @since Symphony 2.7.0
+     * @deprecated @since Symphony 3.0.0
+     *  Use EntryQueryFieldAdapter::isRandomOrder() instead
      * @param string $order
      *  the sorting direction.
      * @return boolean
@@ -1554,6 +1689,12 @@ class Field
      */
     protected function isRandomOrder($order)
     {
+        if (Symphony::Log()) {
+            Symphony::Log()->pushDeprecateWarningToLog(
+                get_called_class() . '::isRandomOrder()',
+                'EntryQueryFieldAdapter::isRandomOrder()'
+            );
+        }
         return in_array(strtolower($order), array('random', 'rand'));
     }
 
@@ -1565,6 +1706,8 @@ class Field
      * Extension developers should always implement both `buildSortingSQL()`
      * and `buildSortingSelectSQL()`.
      *
+     * @deprecated @since Symphony 3.0.0
+     *  Use EntryQueryFieldAdapter::sort() instead
      * @uses Field::isRandomOrder()
      * @see Field::buildSortingSelectSQL()
      * @param string $joins
@@ -1580,11 +1723,17 @@ class Field
      */
     public function buildSortingSQL(&$joins, &$where, &$sort, $order = 'ASC')
     {
+        if (Symphony::Log()) {
+            Symphony::Log()->pushDeprecateWarningToLog(
+                get_called_class() . '::buildSortingSQL()',
+                'EntryQueryFieldAdapter::sort()'
+            );
+        }
         if ($this->isRandomOrder($order)) {
             $sort = 'ORDER BY RAND()';
         } else {
             $joins .= "LEFT OUTER JOIN `tbl_entries_data_".$this->get('id')."` AS `ed` ON (`e`.`id` = `ed`.`entry_id`) ";
-            $sort = sprintf('ORDER BY `ed`.`value` %s', $order);
+            $sort = sprintf('ORDER BY `ed`.`value` %1$s, `e`.`id` %1$s', $order);
         }
     }
 
@@ -1602,6 +1751,8 @@ class Field
      * Extension developers should make their Fields implement
      * `buildSortingSelectSQL()` when overriding `buildSortingSQL()`.
      *
+     * @deprecated @since Symphony 3.0.0
+     *  Use EntryQueryFieldAdapter::sort() instead
      * @since Symphony 2.7.0
      * @uses Field::isRandomOrder()
      * @see Field::buildSortingSQL()
@@ -1617,6 +1768,12 @@ class Field
      */
     public function buildSortingSelectSQL($sort, $order = 'ASC')
     {
+        if (Symphony::Log()) {
+            Symphony::Log()->pushDeprecateWarningToLog(
+                get_called_class() . '::buildSortingSelectSQL()',
+                'EntryQueryFieldAdapter::sort()'
+            );
+        }
         if ($this->isRandomOrder($order)) {
             return null;
         }
@@ -1644,7 +1801,7 @@ class Field
     }
 
     /**
-     * Function to format this field if it chosen in a data-source to be
+     * Function to format this field if it chosen in a data source to be
      * output as a parameter in the XML.
      *
      * Since Symphony 2.5.0, it will defaults to `prepareReadableValue` return value.
@@ -1754,16 +1911,27 @@ class Field
      */
     public function createTable()
     {
-        return Symphony::Database()->query(
-            "CREATE TABLE IF NOT EXISTS `tbl_entries_data_" . $this->get('id') . "` (
-              `id` int(11) unsigned NOT null auto_increment,
-              `entry_id` int(11) unsigned NOT null,
-              `value` varchar(255) default null,
-              PRIMARY KEY  (`id`),
-              KEY `entry_id` (`entry_id`),
-              KEY `value` (`value`)
-            ) ENGINE=MyISAM DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;"
-        );
+        return Symphony::Database()
+            ->create('tbl_entries_data_' . General::intval($this->get('id')))
+            ->ifNotExists()
+            ->fields([
+                'id' => [
+                    'type' => 'int(11)',
+                    'auto' => true,
+                ],
+                'entry_id' => 'int(11)',
+                'value' => [
+                    'type' => 'varchar(255)',
+                    'null' => true,
+                ],
+            ])
+            ->keys([
+                'id' => 'primary',
+                'entry_id' => 'key',
+                'value' => 'key',
+            ])
+            ->execute()
+            ->success();
     }
 
     /**
@@ -1777,7 +1945,6 @@ class Field
      *
      * @since Symphony 2.7.0
      * @see Field::createTable()
-     * @throws DatabaseException
      * @return boolean
      *  true if Symphony should call `createTable()`
      */
@@ -1806,7 +1973,13 @@ class Field
      * Checks that we are working with a valid field handle and field id, and
      * checks that the field record exists in the settings table.
      *
+     * @since Symphony 2.7.1 It does check if the settings table only contains
+     *   default columns and assume those fields do not require a record in the settings table.
+     *   When this situation is detected the field is considered as valid even if no records were
+     *   found in the settings table.
+     *
      * @since Symphony 2.7.0
+     * @see Field::tableExists()
      * @return boolean
      *   true if the field id exists in the table, false otherwise
      */
@@ -1815,11 +1988,45 @@ class Field
         if (!$this->get('id') || !$this->_handle) {
             return false;
         }
-        return !empty(Symphony::Database()->fetch(sprintf(
-            'SELECT `id` FROM `tbl_fields_%s` WHERE `field_id` = %d',
-            $this->_handle,
-            General::intval($this->get('id'))
-        )));
+        $row = Symphony::Database()
+            ->select(['id'])
+            ->from('tbl_fields_' . $this->_handle)
+            ->where(['field_id' => $this->get('id')])
+            ->execute()
+            ->rows();
+
+        if (empty($row)) {
+            // Some fields do not create any records in their settings table because they do not
+            // implement a proper `Field::commit()` method.
+            // The base implementation of the commit function only deals with the "core"
+            // `tbl_fields` table.
+            // The problem with this approach is that it can lead to data corruption when
+            // saving a field that got deleted by another user.
+            // The only way a field can live without a commit method is if it does not store any
+            // settings at all.
+            // But current version of Symphony assume that the `tbl_fields_$handle` table exists
+            // with at least a `id` and `field_id` column, so field are required to at least create
+            // the table to make their field work without SQL errors from the core.
+            $columns = Symphony::Database()
+                ->describe('tbl_fields_' . $this->_handle)
+                ->execute()
+                ->column('Field');
+
+            // The table only has the two required columns, tolerate the missing record
+            $isDefault = count($columns) === 2 &&
+                in_array('id', $columns) &&
+                in_array('field_id', $columns);
+            if ($isDefault) {
+                Symphony::Log()->pushDeprecateWarningToLog($this->_handle, get_class($this), array(
+                    'message-format' => __('The field `%1$s` does not create settings records in the `tbl_fields_%1$s`.'),
+                    'alternative-format' => __('Please implement the commit function in class `%s`.'),
+                    'removal-format' => __('The compatibility check will will be removed in Symphony %s.'),
+                    'removal-version' => '4.0.0',
+                ));
+            }
+            return $isDefault;
+        }
+        return true;
     }
 
     /**
@@ -1836,13 +2043,14 @@ class Field
      */
     public function entryDataCleanup($entry_id, $data = null)
     {
-        $where = is_array($entry_id)
-            ? " `entry_id` IN (" . implode(',', $entry_id) . ") "
-            : " `entry_id` = '$entry_id' ";
-
-        Symphony::Database()->delete('tbl_entries_data_' . $this->get('id'), $where);
-
-        return true;
+        if (!is_array($entry_id)) {
+            $entry_id = [$entry_id];
+        }
+        return Symphony::Database()
+            ->delete('tbl_entries_data_' . $this->get('id'))
+            ->where(['entry_id' => ['in' => $entry_id]])
+            ->execute()
+            ->success();
     }
 
     /**
@@ -1881,27 +2089,6 @@ class Field
     }
 
     /**
-     * Fetch the Entry ID's associated with this field instance given a `$value`,
-     * where the `$value` can be anything. This function is unused by Symphony core
-     * but should be implemented by Fields that maintain relationships.
-     *
-     * @param mixed $value
-     *  the value to find the associated entry ID's for.
-     * @return void|array
-     *  this default implementation returns void. overriding implementations should
-     *  return an array of the associated entry ids.
-     * @deprecated Since Symphony 2.5.0 this method is not called anymore in the core. Please use
-     *  `Field::findRelatedEntries` and `Field::findParentRelatedEntries` instead. This method
-     *  will be removed in Symphony 3.0
-     */
-    public function fetchAssociatedEntryIDs($value)
-    {
-        if (Symphony::Log()) {
-            Symphony::Log()->pushDeprecateWarningToLog('Field::fetchAssociatedEntryIDs()', 'Field::findRelatedEntries()` or Field::findParentRelatedEntries()`');
-        }
-    }
-
-    /**
      * Find related entries from a linking field's data table. Default implementation uses
      * column names `entry_id` and `relation_id` as with the Select Box Link
      *
@@ -1914,14 +2101,15 @@ class Field
     public function findRelatedEntries($entry_id, $parent_field_id)
     {
         try {
-            $ids = Symphony::Database()->fetchCol('entry_id', sprintf("
-                SELECT `entry_id`
-                FROM `tbl_entries_data_%d`
-                WHERE `relation_id` = %d
-                AND `entry_id` IS NOT NULL
-            ", $this->get('id'), $entry_id));
+            $ids = Symphony::Database()
+                ->select(['entry_id'])
+                ->from('tbl_entries_data_' . $this->get('id'))
+                ->where(['relation_id' => General::intval($entry_id)])
+                ->where(['entry_id' => ['!=' => null]])
+                ->execute()
+                ->column('entry_id');
         } catch (Exception $e) {
-            return array();
+            return [];
         }
 
         return $ids;
@@ -1940,16 +2128,31 @@ class Field
     public function findParentRelatedEntries($parent_field_id, $entry_id)
     {
         try {
-            $ids = Symphony::Database()->fetchCol('relation_id', sprintf("
-                SELECT `relation_id`
-                FROM `tbl_entries_data_%d`
-                WHERE `entry_id` = %d
-                AND `relation_id` IS NOT NULL
-            ", $this->get('id') , $entry_id));
+            $ids = Symphony::Database()
+                ->select(['relation_id'])
+                ->from('tbl_entries_data_' . $this->get('id'))
+                ->where(['entry_id' => General::intval($entry_id)])
+                ->where(['relation_id' => ['!=' => null]])
+                ->execute()
+                ->column('relation_id');
         } catch (Exception $e) {
-            return array();
+            return [];
         }
 
         return $ids;
+    }
+
+    /**
+     * Converts all $values into proper ones to use with prepopulate and filtering.
+     * The default implementation simply returns the $values array.
+     *
+     * @param array $values
+     *  The original filter values
+     * @return array
+     *  The proper filter values to use in query strings
+     */
+    public function convertValuesToFilters(array $values)
+    {
+        return $values;
     }
 }

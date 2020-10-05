@@ -3,11 +3,9 @@
 /**
  * @package toolkit
  */
-
 /**
  * A manager to standardize the finding and listing of installed gateways.
  */
-
 class EmailGatewayManager implements FileResource
 {
     /**
@@ -168,7 +166,7 @@ class EmailGatewayManager implements FileResource
         $classname = self::__getClassName($name);
         $path = self::__getDriverPath($name);
 
-        if (!@file_exists($path)) {
+        if (!General::checkFileReadable($path)) {
             return false;
         }
 

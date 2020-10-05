@@ -16,6 +16,7 @@ class FieldSelect extends FieldTagList implements ExportableField, ImportableFie
         $this->_name = __('Select Box');
         $this->_required = true;
         $this->_showassociation = true;
+        $this->entryQueryFieldAdapter = new EntryQueryListAdapter($this);
 
         // Set default
         $this->set('show_column', 'yes');
@@ -101,68 +102,54 @@ class FieldSelect extends FieldTagList implements ExportableField, ImportableFie
     }
 
     /*-------------------------------------------------------------------------
-        Setup:
-    -------------------------------------------------------------------------*/
-
-    public function createTable()
-    {
-        return Symphony::Database()->query(
-            "CREATE TABLE IF NOT EXISTS `tbl_entries_data_" . $this->get('id') . "` (
-              `id` int(11) unsigned NOT null auto_increment,
-              `entry_id` int(11) unsigned NOT null,
-              `handle` varchar(255) default null,
-              `value` varchar(255) default null,
-              PRIMARY KEY  (`id`),
-              KEY `entry_id` (`entry_id`),
-              KEY `handle` (`handle`),
-              KEY `value` (`value`)
-            ) ENGINE=MyISAM DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;"
-        );
-    }
-
-    /*-------------------------------------------------------------------------
         Utilities:
     -------------------------------------------------------------------------*/
 
     public function findAndAddDynamicOptions(&$values)
     {
         if (!is_array($values)) {
-            $values = array();
+            $values = [];
         }
 
-        $results = false;
+        $results = null;
 
         // Fixes #1802
-        if (!Symphony::Database()->tableExists('tbl_entries_data_' . $this->get('dynamic_options'))) {
+        if (!Symphony::Database()->tableExists('tbl_entries_data_' . General::intval($this->get('dynamic_options')))) {
             return;
         }
 
         // Ensure that the table has a 'value' column
-        if ((boolean)Symphony::Database()->fetchVar('Field', 0, sprintf(
-            "SHOW COLUMNS FROM `tbl_entries_data_%d` LIKE '%s'",
-            $this->get('dynamic_options'),
-            'value'
-        ))) {
-            $results = Symphony::Database()->fetchCol('value', sprintf(
-                "SELECT DISTINCT `value`
-                FROM `tbl_entries_data_%d`
-                ORDER BY `value` ASC",
-                $this->get('dynamic_options')
-            ));
+        if (count(Symphony::Database()
+            ->showColumns()
+            ->from('tbl_entries_data_' . $this->get('dynamic_options'))
+            ->like('value')
+            ->execute()
+            ->rows()) === 1
+        ) {
+            $results = Symphony::Database()
+                ->select(['value'])
+                ->distinct()
+                ->from('tbl_entries_data_' . $this->get('dynamic_options'))
+                ->orderBy(['value' => 'ASC'])
+                ->execute()
+                ->column('value');
         }
 
         // In the case of a Upload field, use 'file' instead of 'value'
-        if (($results == false) && (boolean)Symphony::Database()->fetchVar('Field', 0, sprintf(
-            "SHOW COLUMNS FROM `tbl_entries_data_%d` LIKE '%s'",
-            $this->get('dynamic_options'),
-            'file'
-        ))) {
-            $results = Symphony::Database()->fetchCol('file', sprintf(
-                "SELECT DISTINCT `file`
-                FROM `tbl_entries_data_%d`
-                ORDER BY `file` ASC",
-                $this->get('dynamic_options')
-            ));
+        if (!$results && count(Symphony::Database()
+            ->showColumns()
+            ->from('tbl_entries_data_' . $this->get('dynamic_options'))
+            ->like('file')
+            ->execute()
+            ->rows()) === 1
+        ) {
+            $results = Symphony::Database()
+                ->select(['value'])
+                ->distinct()
+                ->from('tbl_entries_data_' . $this->get('dynamic_options'))
+                ->orderBy(['file' => 'ASC'])
+                ->execute()
+                ->column('file');
         }
 
         if ($results) {
@@ -323,9 +310,10 @@ class FieldSelect extends FieldTagList implements ExportableField, ImportableFie
             $value = array($value);
         }
 
-        $options = array(
-            array(null, false, null)
-        );
+        $options = array();
+        if ($this->get('required') !== 'yes') {
+            $options[] = array(null, false, null);
+        }
 
         foreach ($states as $handle => $v) {
             $options[] = array(General::sanitize($v), in_array($v, $value), General::sanitize($v));

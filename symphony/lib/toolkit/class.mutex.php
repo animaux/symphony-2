@@ -48,9 +48,9 @@ class Mutex
         // failing with E_WARNING here and we do not want Symphony to throw
         // errors or spam logfiles.
         try {
-            GenericErrorHandler::$logDisabled = true;
+            ErrorHandler::$logDisabled = true;
             $lock = fopen($lockFile, 'xb');
-            GenericErrorHandler::$logDisabled = false;
+            ErrorHandler::$logDisabled = false;
 
             self::$lockFiles[$lockFile] = array('time' => time(), 'ttl' => $ttl);
             fclose($lock);
@@ -89,11 +89,7 @@ class Mutex
 
         if (!empty(self::$lockFiles[$lockFile])) {
             unset(self::$lockFiles[$lockFile]);
-            if (file_exists($lockFile)) {
-                return unlink($lockFile);
-            } else {
-                return true;
-            }
+            return General::deleteFile($lockFile, false);
         }
 
         return false;

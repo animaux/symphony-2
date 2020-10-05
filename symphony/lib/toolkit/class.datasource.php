@@ -7,18 +7,27 @@
  * The Datasource class provides functionality to mainly process any parameters
  * that the fields will use in filters find the relevant Entries and return these Entries
  * data as XML so that XSLT can be applied on it to create your website. In Symphony,
- * there are four Datasource types provided, Section, Author, Navigation and Dynamic
- * XML. Section is the mostly commonly used Datasource, which allows the filtering
- * and searching for Entries in a Section to be returned as XML. Navigation datasources
- * expose the Symphony Navigation structure of the Pages in the installation. Authors
- * expose the Symphony Authors that are registered as users of the backend. Finally,
- * the Dynamic XML datasource allows XML pages to be retrieved. This is especially
- * helpful for working with Restful XML API's. Datasources are saved through the
+ * there are four Datasource types provided, Section, Author, Navigation and Static XML.
+ *
+ * Section is the mostly commonly used Datasource, which allows the filtering
+ * and searching for Entries in a Section to be returned as XML.
+ *
+ * Navigation datasources
+ * expose the Symphony Navigation structure of the Pages in the installation.
+ *
+ * Authors datasources
+ * expose the Symphony Authors that are registered as users of the backend.
+ *
+ * Static XML datasources
+ * exposes some static XML to add to the page XML.
+ *
+ * Datasources are saved through the
  * Symphony backend, which uses a Datasource template defined in
  * `TEMPLATE . /datasource.tpl`.
+ *
+ * @link http://www.getsymphony.com/learn/concepts/view/data-sources/
  */
-
-class Datasource
+abstract class Datasource
 {
     /**
      * A constant that represents if this filter is an AND filter in which
@@ -126,7 +135,7 @@ class Datasource
      * custom events. Other datasources may return a string here defining their datasource
      * type when they do not query a section.
      *
-     * @return mixed
+     * @return string|integer|null
      */
     public function getSource()
     {
@@ -154,20 +163,6 @@ class Datasource
     }
 
     /**
-     * @deprecated This function has been renamed to `execute` as of
-     *  Symphony 2.3.1, please use `execute()` instead. This function will
-     *  be removed in Symphony 3.0
-     * @see execute()
-     */
-    public function grab(array &$param_pool = null)
-    {
-        if (Symphony::Log()) {
-            Symphony::Log()->pushDeprecateWarningToLog('Datasource::grab()', 'Datasource::execute()');
-        }
-        return $this->execute($param_pool);
-    }
-
-    /**
      * The meat of the Datasource, this function includes the datasource
      * type's file that will preform the logic to return the data for this datasource
      * It is passed the current parameters.
@@ -187,7 +182,7 @@ class Datasource
         } catch (FrontendPageNotFoundException $e) {
             // Work around. This ensures the 404 page is displayed and
             // is not picked up by the default catch() statement below
-            FrontendPageNotFoundExceptionHandler::render($e);
+            FrontendPageNotFoundExceptionRenderer::render($e);
         } catch (Exception $e) {
             $result->appendChild(new XMLElement('error', General::wrapInCDATA($e->getMessage())));
             return $result;
@@ -253,7 +248,7 @@ class Datasource
     }
 
     /**
-     * If there is no results to return this function calls `Datasource::__noRecordsFound`
+     * If there is no results to return this function calls `Datasource::noRecordsFound`
      * which appends an XMLElement to the current root element.
      *
      * @param XMLElement $xml
@@ -267,13 +262,13 @@ class Datasource
             $xml = new XMLElement($this->dsParamROOTELEMENT);
         }
 
-        $xml->appendChild($this->__noRecordsFound());
+        $xml->appendChild($this->noRecordsFound());
 
         return $xml;
     }
 
     /**
-     * If the datasource has been negated this function calls `Datasource::__negateResult`
+     * If the datasource has been negated this function calls `Datasource::negateResult`
      * which appends an XMLElement to the current root element.
      *
      * @param XMLElement $xml
@@ -287,7 +282,7 @@ class Datasource
             $xml = new XMLElement($this->dsParamROOTELEMENT);
         }
 
-        $xml->appendChild($this->__negateResult());
+        $xml->appendChild($this->negateResult());
 
         return $xml;
     }
@@ -297,7 +292,7 @@ class Datasource
      *
      * @return XMLElement
      */
-    public function __noRecordsFound()
+    public function noRecordsFound()
     {
         return new XMLElement('error', __('No records found.'));
     }
@@ -307,7 +302,7 @@ class Datasource
      *
      * @return XMLElement
      */
-    public function __negateResult()
+    public function negateResult()
     {
         $error = new XMLElement('error', __("Data source not executed, forbidden parameter was found."), array(
             'forbidden-param' => $this->dsParamNEGATEPARAM
@@ -335,7 +330,7 @@ class Datasource
         if ((isset($this->_env) && is_array($this->_env)) && isset($this->dsParamFILTERS) && is_array($this->dsParamFILTERS) && !empty($this->dsParamFILTERS)) {
             foreach ($this->dsParamFILTERS as $key => $value) {
                 $value = stripslashes($value);
-                $new_value = $this->__processParametersInString($value, $this->_env);
+                $new_value = $this->processParametersInString($value, $this->_env);
 
                 // If a filter gets evaluated to nothing, eg. ` + ` or ``, then remove
                 // the filter. Respects / as this may be real from current-path. RE: #1759
@@ -348,43 +343,51 @@ class Datasource
         }
 
         if (isset($this->dsParamORDER)) {
-            $this->dsParamORDER = $this->__processParametersInString($this->dsParamORDER, $this->_env);
+            $this->dsParamORDER = $this->processParametersInString($this->dsParamORDER, $this->_env);
         }
 
         if (isset($this->dsParamSORT)) {
-            $this->dsParamSORT = $this->__processParametersInString($this->dsParamSORT, $this->_env);
+            $this->dsParamSORT = $this->processParametersInString($this->dsParamSORT, $this->_env);
         }
 
         if (isset($this->dsParamSTARTPAGE)) {
-            $this->dsParamSTARTPAGE = $this->__processParametersInString($this->dsParamSTARTPAGE, $this->_env);
+            $this->dsParamSTARTPAGE = $this->processParametersInString($this->dsParamSTARTPAGE, $this->_env);
             if ($this->dsParamSTARTPAGE === '') {
                 $this->dsParamSTARTPAGE = '1';
             }
         }
 
         if (isset($this->dsParamLIMIT)) {
-            $this->dsParamLIMIT = $this->__processParametersInString($this->dsParamLIMIT, $this->_env);
+            $this->dsParamLIMIT = $this->processParametersInString($this->dsParamLIMIT, $this->_env);
         }
 
         if (
             isset($this->dsParamREQUIREDPARAM)
             && strlen(trim($this->dsParamREQUIREDPARAM)) > 0
-            && $this->__processParametersInString(trim($this->dsParamREQUIREDPARAM), $this->_env, false) === ''
+            && $this->processParametersInString(trim($this->dsParamREQUIREDPARAM), $this->_env, false) === ''
         ) {
             $this->_force_empty_result = true; // don't output any XML
-            $this->dsParamPARAMOUTPUT = null; // don't output any parameters
-            $this->dsParamINCLUDEDELEMENTS = null; // don't query any fields in this section
+            if (isset($this->dsParamPARAMOUTPUT)) {
+                $this->dsParamPARAMOUTPUT = null; // don't output any parameters
+            }
+            if (isset($this->dsParamINCLUDEDELEMENTS)) {
+                $this->dsParamINCLUDEDELEMENTS = null; // don't query any fields in this section
+            }
             return;
         }
 
         if (
             isset($this->dsParamNEGATEPARAM)
             && strlen(trim($this->dsParamNEGATEPARAM)) > 0
-            && $this->__processParametersInString(trim($this->dsParamNEGATEPARAM), $this->_env, false) !== ''
+            && $this->processParametersInString(trim($this->dsParamNEGATEPARAM), $this->_env, false) !== ''
         ) {
             $this->_negate_result = true; // don't output any XML
-            $this->dsParamPARAMOUTPUT = null; // don't output any parameters
-            $this->dsParamINCLUDEDELEMENTS = null; // don't query any fields in this section
+            if (isset($this->dsParamPARAMOUTPUT)) {
+                $this->dsParamPARAMOUTPUT = null; // don't output any parameters
+            }
+            if (isset($this->dsParamINCLUDEDELEMENTS)) {
+                $this->dsParamINCLUDEDELEMENTS = null; // don't query any fields in this section
+            }
             return;
         }
 
@@ -424,7 +427,7 @@ class Datasource
         }
 
         foreach ($params as $key => $info) {
-            $replacement = $this->__processParametersInString($info['param'], $this->_env, false);
+            $replacement = $this->processParametersInString($info['param'], $this->_env, false);
             if ($info['encode'] == true) {
                 $replacement = urlencode($replacement);
             }
@@ -458,7 +461,7 @@ class Datasource
      *  The string with all parameters evaluated. If a parameter is not found, it will
      *  not be replaced and remain in the `$value`.
      */
-    public function __processParametersInString($value, array $env, $includeParenthesis = true, $escape = false)
+    public function processParametersInString($value, array $env, $includeParenthesis = true, $escape = false)
     {
         if (trim($value) == '') {
             return null;
@@ -565,29 +568,5 @@ class Datasource
         }
 
         return null;
-    }
-
-    /**
-     * By default, all Symphony filters are considering to be OR and "+" filters
-     * are used for AND. They are all used and Entries must match each filter to be included.
-     * It is possible to use OR filtering in a field by using an "," to separate the values.
-     * eg. If the filter is "test1, test2", this will match any entries where this field
-     * is test1 OR test2. If the filter is "test1 + test2", this will match entries
-     * where this field is test1 AND test2. Not all fields supports this feature.
-     * This function is run on each filter (ie. each field) in a datasource.
-     *
-     * @deprecated Since Symphony 2.6.0 it is recommended to use the static version,
-     *  `Datasource::determineFilterType`
-     * @param string $value
-     *  The filter string for a field.
-     * @return integer
-     *  Datasource::FILTER_OR or Datasource::FILTER_AND
-     */
-    public function __determineFilterType($value)
-    {
-        if (Symphony::Log()) {
-            Symphony::Log()->pushDeprecateWarningToLog('Datasource::__determineFilterType()', 'Datasource::determineFilterType()');
-        }
-        return self::determineFilterType($value);
     }
 }

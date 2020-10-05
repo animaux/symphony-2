@@ -2,9 +2,10 @@
  * @package assets
  */
 
-(function($, Symphony) {
+(function($) {
+	'use strict';
 
-	$(document).ready(function() {
+	$(function() {
 
 		// Init collapsibles
 		var collapsible = $('.frame').symphonyCollapsible({
@@ -21,4 +22,4 @@
 		}
 	});
 
-})(window.jQuery, window.Symphony);
+})(window.jQuery);

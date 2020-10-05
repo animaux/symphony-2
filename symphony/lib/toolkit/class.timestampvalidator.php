@@ -28,9 +28,9 @@ class TimestampValidator
     public function __construct($table)
     {
         General::ensureType(array(
-            'table' => array('var' => $table, 'type'=> 'string'),
+            'table' => array('var' => $table, 'type' => 'string'),
         ));
-        $this->table = 'tbl_' . MySQL::cleanValue($table);
+        $this->table = 'tbl_' . $table;
     }
 
     /**
@@ -46,17 +46,17 @@ class TimestampValidator
      */
     public function check($id, $timestamp)
     {
-        $id = General::intval(MySQL::cleanValue($id));
+        $id = General::intval($id);
         if ($id < 1) {
             return false;
         }
-        $timestamp = MySQL::cleanValue($timestamp);
-        $sql = "
-            SELECT `id` FROM `{$this->table}`
-                WHERE `id` = $id
-                    AND `modification_date` = '$timestamp'
-        ";
-        $results = Symphony::Database()->fetchVar('id', 0, $sql);
-        return !empty($results) && General::intval($results) === $id;
+        $result = Symphony::Database()
+            ->select(['id'])
+            ->from($this->table)
+            ->where(['id' => $id])
+            ->where(['modification_date' => $timestamp])
+            ->execute()
+            ->integer('id');
+        return $result === $id;
     }
 }

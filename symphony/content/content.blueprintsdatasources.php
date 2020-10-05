@@ -10,8 +10,6 @@
 
 class contentBlueprintsDatasources extends ResourcesPage
 {
-    public $_errors = array();
-
     public function __viewIndex($resource_type)
     {
         parent::__viewIndex(ResourceManager::RESOURCE_TYPE_DS);
@@ -42,10 +40,10 @@ class contentBlueprintsDatasources extends ResourcesPage
             );
 
             // These alerts are only valid if the form doesn't have errors
-        } elseif (isset($this->_context[2])) {
+        } elseif (isset($this->_context['flag'])) {
             $time = Widget::Time();
 
-            switch ($this->_context[2]) {
+            switch ($this->_context['flag']) {
                 case 'saved':
                     $message = __('Data Source updated at %s.', array($time->generate()));
                     break;
@@ -66,16 +64,17 @@ class contentBlueprintsDatasources extends ResourcesPage
 
         $providers = Symphony::ExtensionManager()->getProvidersOf(iProvider::DATASOURCE);
         $canonical_link = null;
-        $isEditing = false;
+        $isEditing = $this->_context['action'] === 'edit';
         $about = $handle = null;
-        $fields = array(
+        $fields = [
             'name' => null,
             'source' => null,
             'filter'=> null,
             'required_url_param' => null,
             'negate_url_param' => null,
             'param' => null,
-        );
+            'paramxml' => null,
+        ];
 
         if (isset($_POST['fields'])) {
             $fields = $_POST['fields'];
@@ -98,12 +97,8 @@ class contentBlueprintsDatasources extends ResourcesPage
                 $fields['xml_elements'] = array();
             }
 
-            if ($this->_context[0] == 'edit') {
-                $isEditing = true;
-            }
-        } elseif ($this->_context[0] == 'edit') {
-            $isEditing = true;
-            $handle = $this->_context[1];
+        } elseif ($isEditing) {
+            $handle = $this->_context['handle'];
             $existing = DatasourceManager::create($handle, array(), false);
             $order = isset($existing->dsParamORDER) ? stripslashes($existing->dsParamORDER) : 'asc';
             $canonical_link = '/blueprints/datasources/edit/' . $handle . '/';
@@ -117,6 +112,7 @@ class contentBlueprintsDatasources extends ResourcesPage
 
             $fields['order'] = ($order == 'rand') ? 'random' : $order;
             $fields['param'] = isset($existing->dsParamPARAMOUTPUT) ? array_map('stripslashes', $existing->dsParamPARAMOUTPUT) : null;
+            $fields['paramxml'] = isset($existing->dsParamPARAMXML) ? ($existing->dsParamPARAMXML === 'yes' ? 'yes' : 'no') : 'yes';
             $fields['required_url_param'] = isset($existing->dsParamREQUIREDPARAM) ? stripslashes(trim($existing->dsParamREQUIREDPARAM)) : null;
             $fields['negate_url_param'] = isset($existing->dsParamNEGATEPARAM) ? stripslashes(trim($existing->dsParamNEGATEPARAM)) : null;
 
@@ -167,20 +163,7 @@ class contentBlueprintsDatasources extends ResourcesPage
                         $fields['filter']['navigation'] = $existing->dsParamFILTERS;
                         break;
                     case 'static_xml':
-                        // Symphony 2.3+
-                        if (isset($existing->dsParamSTATIC)) {
-                            $fields['static_xml'] = stripslashes(trim($existing->dsParamSTATIC));
-
-                            // Handle Symphony 2.2.2 to 2.3 DS's
-                            // This is deprecated and will be removed in Symphony 3.0.0
-                        } elseif (isset($existing->dsSTATIC)) {
-                            $fields['static_xml'] = stripslashes(trim($existing->dsSTATIC));
-
-                            // Handle pre Symphony 2.2.1 Static DS's
-                            // This is deprecated and will be removed in Symphony 3.0.0
-                        } else {
-                            $fields['static_xml'] = trim($existing->grab());
-                        }
+                        $fields['static_xml'] = stripslashes(trim($existing->dsParamSTATIC));
                         break;
                     default:
                         $fields['filter'][$fields['source']] = $existing->dsParamFILTERS;
@@ -194,6 +177,7 @@ class contentBlueprintsDatasources extends ResourcesPage
             $fields['order'] = 'desc';
         }
 
+        $name = null;
         // Handle name on edited changes, or from reading an edited datasource
         if (isset($about['name'])) {
             $name = $about['name'];
@@ -202,7 +186,14 @@ class contentBlueprintsDatasources extends ResourcesPage
         }
 
         $this->setPageType('form');
-        $this->setTitle(__(($isEditing ? '%1$s &ndash; %2$s &ndash; %3$s' : '%2$s &ndash; %3$s'), array($name, __('Data Sources'), __('Symphony'))));
+        $this->setTitle(
+            __(
+                $isEditing
+                    ? '%1$s &ndash; %2$s &ndash; %3$s'
+                    : '%2$s &ndash; %3$s',
+                [$name, __('Data Sources'), __('Symphony')]
+            )
+        );
         if ($canonical_link) {
             $this->addElementToHead(new XMLElement('link', null, array(
                 'rel' => 'canonical',
@@ -221,11 +212,7 @@ class contentBlueprintsDatasources extends ResourcesPage
         $sources->appendChild($label);
         $sources->appendChild($div);
 
-        $sections = SectionManager::fetch(null, 'ASC', 'name');
-
-        if (!is_array($sections)) {
-            $sections = array();
-        }
+        $sections = (new SectionManager)->select()->execute()->rows();
 
         $field_groups = array();
 
@@ -336,13 +323,13 @@ class contentBlueprintsDatasources extends ResourcesPage
         $fieldset->appendChild($p);
         $group = new XMLElement('div');
 
-        $label = Widget::Checkbox('fields[redirect_on_required]', $fields['redirect_on_required'], __('The required parameter is missing'));
+        $label = Widget::Checkbox('fields[redirect_on_required]', isset($fields['redirect_on_required']) ? $fields['redirect_on_required'] : null, __('The required parameter is missing'));
         $group->appendChild($label);
 
-        $label = Widget::Checkbox('fields[redirect_on_forbidden]', $fields['redirect_on_forbidden'], __('The forbidden parameter is present'));
+        $label = Widget::Checkbox('fields[redirect_on_forbidden]', isset($fields['redirect_on_forbidden']) ? $fields['redirect_on_forbidden'] : null, __('The forbidden parameter is present'));
         $group->appendChild($label);
 
-        $label = Widget::Checkbox('fields[redirect_on_empty]', $fields['redirect_on_empty'], __('No results are found'));
+        $label = Widget::Checkbox('fields[redirect_on_empty]', isset($fields['redirect_on_empty']) ? $fields['redirect_on_empty'] : null, __('No results are found'));
         $group->appendChild($label);
 
         $fieldset->appendChild($group);
@@ -401,7 +388,7 @@ class contentBlueprintsDatasources extends ResourcesPage
             $li->setAttribute('data-type', 'system:id');
             $li->appendChild(new XMLElement('header', '<h4>' . __('System ID') . '</h4>'));
             $label = Widget::Label(__('Value'));
-            $input = Widget::Input('fields[filter]['.$section_id.'][system:id]', General::sanitize($id));
+            $input = Widget::Input('fields[filter]['.$section_id.'][system:id]');
             $input->setAttribute('data-search-types', 'parameters');
             $input->setAttribute('data-trigger', '{$');
             $label->appendChild($input);
@@ -510,23 +497,12 @@ class contentBlueprintsDatasources extends ResourcesPage
         $ol->setAttribute('data-add', __('Add filter'));
         $ol->setAttribute('data-remove', __('Remove filter'));
 
-        if (!isset($fields['filter']['author'])) {
-            $fields['filter']['author'] = array(
-                'id' => null,
-                'username' => null,
-                'first_name' => null,
-                'last_name' => null,
-                'email' => null,
-                'user_type' => null
-            );
-        }
-
-        $this->__appendAuthorFilter($ol, __('ID'), 'id', $fields['filter']['author']['id'], (!isset($fields['filter']['author']['id'])));
-        $this->__appendAuthorFilter($ol, __('Username'), 'username', $fields['filter']['author']['username'], (!isset($fields['filter']['author']['username'])));
-        $this->__appendAuthorFilter($ol, __('First Name'), 'first_name', $fields['filter']['author']['first_name'], (!isset($fields['filter']['author']['first_name'])));
-        $this->__appendAuthorFilter($ol, __('Last Name'), 'last_name', $fields['filter']['author']['last_name'], (!isset($fields['filter']['author']['last_name'])));
-        $this->__appendAuthorFilter($ol, __('Email'), 'email', $fields['filter']['author']['email'], (!isset($fields['filter']['author']['email'])));
-        $this->__appendAuthorFilter($ol, __('User Type'), 'user_type', $fields['filter']['author']['user_type'], (!isset($fields['filter']['author']['user_type'])));
+        $this->__appendAuthorFilter($ol, __('ID'), 'id', isset($fields['filter']['author']['id']) ? $fields['filter']['author']['id'] : null, !isset($fields['filter']['author']['id']));
+        $this->__appendAuthorFilter($ol, __('Username'), 'username', isset($fields['filter']['author']['username']) ? $fields['filter']['author']['username'] : null, !isset($fields['filter']['author']['username']));
+        $this->__appendAuthorFilter($ol, __('First Name'), 'first_name', isset($fields['filter']['author']['first_name']) ? $fields['filter']['author']['first_name'] : null, !isset($fields['filter']['author']['first_name']));
+        $this->__appendAuthorFilter($ol, __('Last Name'), 'last_name', isset($fields['filter']['author']['last_name']) ? $fields['filter']['author']['last_name'] : null, !isset($fields['filter']['author']['last_name']));
+        $this->__appendAuthorFilter($ol, __('Email'), 'email', isset($fields['filter']['author']['email']) ? $fields['filter']['author']['email'] : null, !isset($fields['filter']['author']['email']));
+        $this->__appendAuthorFilter($ol, __('User Type'), 'user_type', isset($fields['filter']['author']['user_type']) ? $fields['filter']['author']['user_type'] : null, !isset($fields['filter']['author']['user_type']));
 
         $div->appendChild($ol);
 
@@ -547,7 +523,11 @@ class contentBlueprintsDatasources extends ResourcesPage
         $ul->setAttribute('class', 'tags');
         $ul->setAttribute('data-interactive', 'data-interactive');
 
-        $pages = PageManager::fetch(false, array('*'), array(), 'title ASC');
+        $pages = (new PageManager)
+            ->select()
+            ->sort('title')
+            ->execute()
+            ->rows();
 
         foreach ($pages as $page) {
             $ul->appendChild(new XMLElement('li', preg_replace('/\/{2,}/i', '/', '/' . $page['path'] . '/' . $page['handle'])));
@@ -581,7 +561,7 @@ class contentBlueprintsDatasources extends ResourcesPage
 
         if ($types = PageManager::fetchAvailablePageTypes()) {
             foreach ($types as $type) {
-                $ul->appendChild(new XMLElement('li', $type));
+                $ul->appendChild(new XMLElement('li', General::sanitize($type)));
             }
         }
 
@@ -774,7 +754,7 @@ class contentBlueprintsDatasources extends ResourcesPage
 
         $fieldset->appendChild($group);
 
-        $label = Widget::Checkbox('fields[paginate_results]', $fields['paginate_results'], __('Enable pagination'));
+        $label = Widget::Checkbox('fields[paginate_results]', isset($fields['paginate_results']) ? $fields['paginate_results'] : null, __('Enable pagination'));
         $fieldset->appendChild($label);
         $this->Form->appendChild($fieldset);
 
@@ -785,9 +765,9 @@ class contentBlueprintsDatasources extends ResourcesPage
 
         // XML
         $group = new XMLElement('div', null, array('class' => 'two columns'));
+        $col = new XMLElement('div', null, array('class' => 'column'));
 
         $label = Widget::Label(__('Included Elements'));
-        $label->setAttribute('class', 'column');
 
         $options = array(
             array('label' => __('Authors'), 'data-label' => 'authors', 'options' => array(
@@ -804,6 +784,11 @@ class contentBlueprintsDatasources extends ResourcesPage
                 'label' => General::sanitize($section_data['section']->get('name')),
                 'data-label' => 'section-' . $section_data['section']->get('id'),
                 'options' => array(
+                    array(
+                        'system:id',
+                        ($fields['source'] == $section_id && in_array('system:id', $fields['xml_elements'])),
+                        'system: id'
+                    ),
                     array(
                         'system:pagination',
                         ($fields['source'] == $section_id && in_array('system:pagination', $fields['xml_elements'])),
@@ -839,7 +824,20 @@ class contentBlueprintsDatasources extends ResourcesPage
         }
 
         $label->appendChild(Widget::Select('fields[xml_elements][]', $options, array('multiple' => 'multiple')));
-        $group->appendChild($label);
+        $col->appendChild($label);
+
+        // Associations
+        $label = Widget::Checkbox('fields[associated_entry_counts]', isset($fields['associated_entry_counts']) ? $fields['associated_entry_counts'] : null, __('Include a count of entries in associated sections'));
+        $this->setContext($label, array('sections'));
+        $col->appendChild($label);
+
+        // Encoding
+        $label = Widget::Checkbox('fields[html_encode]', isset($fields['html_encode']) ? $fields['html_encode'] : null, __('HTML-encode text'));
+        $this->setContext($label, array('sections'));
+        $col->appendChild($label);
+
+        $group->appendChild($col);
+        $col = new XMLElement('div', null, array('class' => 'column'));
 
         // Support multiple parameters
         if (!isset($fields['param'])) {
@@ -848,9 +846,9 @@ class contentBlueprintsDatasources extends ResourcesPage
             $fields['param'] = array($fields['param']);
         }
 
-        $label = Widget::Label(__('Parameters'));
-        $label->setAttribute('class', 'column');
-        $prefix = '$ds-' . (isset($this->_context[1]) ? Lang::createHandle($fields['name']) : __('untitled')) . '.';
+        // Parameters
+        $label = Widget::Label(__('Output Parameters'));
+        $prefix = '$ds-' . (isset($this->_context['handle']) ? Lang::createHandle($fields['name']) : __('untitled')) . '.';
 
         $options = array(
             array('label' => __('Authors'), 'data-label' => 'authors', 'options' => array())
@@ -917,19 +915,15 @@ class contentBlueprintsDatasources extends ResourcesPage
         }
 
         $label->appendChild(Widget::Select('fields[param][]', $options, array('multiple' => 'multiple')));
-        $group->appendChild($label);
+        $col->appendChild($label);
 
+        // Parameters in XML
+        $label = Widget::Checkbox('fields[paramxml]', isset($fields['paramxml']) ? $fields['paramxml'] : null, __('Include output parameters in xml'));
+        $this->setContext($label, array('sections', 'authors'));
+        $col->appendChild($label);
+
+        $group->appendChild($col);
         $fieldset->appendChild($group);
-
-        // Associations
-        $label = Widget::Checkbox('fields[associated_entry_counts]', $fields['associated_entry_counts'], __('Include a count of entries in associated sections'));
-        $this->setContext($label, array('sections'));
-        $fieldset->appendChild($label);
-
-        // Encoding
-        $label = Widget::Checkbox('fields[html_encode]', $fields['html_encode'], __('HTML-encode text'));
-        $this->setContext($label, array('sections'));
-        $fieldset->appendChild($label);
 
         $this->Form->appendChild($fieldset);
 
@@ -946,7 +940,12 @@ class contentBlueprintsDatasources extends ResourcesPage
         $fieldset->appendChild($p);
 
         $label = Widget::Label();
-        $label->appendChild(Widget::Textarea('fields[static_xml]', 12, 50, General::sanitize($fields['static_xml']), array('class' => 'code', 'placeholder' => '<static>content</static>')));
+        $static_xml = htmlspecialchars(
+            $fields['static_xml'],
+            ENT_XML1|ENT_COMPAT,
+            'UTF-8'
+        );
+        $label->appendChild(Widget::Textarea('fields[static_xml]', 12, 50, $static_xml, array('class' => 'code', 'placeholder' => '<static>content</static>')));
 
         if (isset($this->_errors['static_xml'])) {
             $fieldset->appendChild(Widget::Error($label, $this->_errors['static_xml']));
@@ -967,7 +966,7 @@ class contentBlueprintsDatasources extends ResourcesPage
         $div = new XMLElement('div');
         $label = Widget::Label(__('Pages'));
 
-        $pages = PageManager::fetch();
+        $pages = (new PageManager)->select()->includeTypes()->execute()->rows();
         $ds_handle = str_replace('-', '_', Lang::createHandle($fields['name']));
         $connections = ResourceManager::getAttachedPages(ResourceManager::RESOURCE_TYPE_DS, $ds_handle);
         $selected = array();
@@ -979,7 +978,11 @@ class contentBlueprintsDatasources extends ResourcesPage
         $options = array();
 
         foreach ($pages as $page) {
-            $options[] = array($page['id'], in_array($page['id'], $selected), PageManager::resolvePageTitle($page['id']));
+            $options[] = array(
+                $page['id'],
+                in_array($page['id'], $selected),
+                General::sanitize(PageManager::resolvePageTitle($page['id']))
+            );
         }
 
         $label->appendChild(Widget::Select('fields[connections][]', $options, array('multiple' => 'multiple')));
@@ -1016,11 +1019,11 @@ class contentBlueprintsDatasources extends ResourcesPage
     {
         $this->setPageType('form');
 
-        $datasource = DatasourceManager::create($this->_context[1], array(), false);
+        $datasource = DatasourceManager::create($this->_context['handle'], array(), false);
         $about = General::array_map_recursive('stripslashes', $datasource->about());
 
         $this->setTitle(__('%1$s &ndash; %2$s &ndash; %3$s', array($about['name'], __('Data Source'), __('Symphony'))));
-        $this->appendSubheading((($this->_context[0] == 'info') ? $about['name'] : __('Untitled')));
+        $this->appendSubheading((($this->_context['action'] === 'info') ? $about['name'] : __('Untitled')));
         $this->insertBreadcrumbs(array(
             Widget::Anchor(__('Data Sources'), SYMPHONY_URL . '/blueprints/datasources/'),
         ));
@@ -1048,7 +1051,7 @@ class contentBlueprintsDatasources extends ResourcesPage
                 case 'version':
                     $fieldset = new XMLElement('fieldset');
                     $fieldset->appendChild(new XMLElement('legend', __('Version')));
-                    $release_date = array_key_exists('release-date', $about) ? $about['release-date'] : filemtime(DatasourceManager::__getDriverPath($this->_context[1]));
+                    $release_date = array_key_exists('release-date', $about) ? $about['release-date'] : filemtime(DatasourceManager::__getDriverPath($this->_context['handle']));
 
                     if (preg_match('/^\d+(\.\d+)*$/', $value)) {
                         $fieldset->appendChild(new XMLElement('p', __('%1$s released on %2$s', array($value, DateTimeObj::format($release_date, __SYM_DATE_FORMAT__)))));
@@ -1086,7 +1089,7 @@ class contentBlueprintsDatasources extends ResourcesPage
         }
 
         // Display source
-        $file = DatasourceManager::__getClassPath($this->_context[1]) . '/data.' . $this->_context[1] . '.php';
+        $file = DatasourceManager::__getClassPath($this->_context['handle']) . '/data.' . $this->_context['handle'] . '.php';
 
         if (file_exists($file)) {
             $fieldset = new XMLElement('fieldset');
@@ -1110,9 +1113,9 @@ class contentBlueprintsDatasources extends ResourcesPage
 
     public function __actionEdit()
     {
-        if (array_key_exists('save', $_POST['action'])) {
+        if (is_array($_POST['action']) && array_key_exists('save', $_POST['action'])) {
             return $this->__formAction();
-        } elseif (array_key_exists('delete', $_POST['action'])) {
+        } elseif (is_array($_POST['action']) && array_key_exists('delete', $_POST['action'])) {
             /**
              * Prior to deleting the Datasource file. Target file path is provided.
              *
@@ -1122,21 +1125,44 @@ class contentBlueprintsDatasources extends ResourcesPage
              * '/blueprints/datasources/'
              * @param string $file
              *  The path to the Datasource file
+             * @param string $handle
+             *  @since Symphony 3.0.0
+             *  The handle of the Datasource
              */
-            Symphony::ExtensionManager()->notifyMembers('DatasourcePreDelete', '/blueprints/datasources/', array('file' => DATASOURCES . "/data." . $this->_context[1] . ".php"));
+            Symphony::ExtensionManager()->notifyMembers('DatasourcePreDelete', '/blueprints/datasources/', array(
+                'file' => DATASOURCES . "/data." . $this->_context['handle'] . ".php",
+                'handle' => $this->_context['handle'],
+            ));
 
-            if (!General::deleteFile(DATASOURCES . '/data.' . $this->_context[1] . '.php')) {
+            if (!General::deleteFile(DATASOURCES . '/data.' . $this->_context['handle'] . '.php')) {
                 $this->pageAlert(
-                    __('Failed to delete %s.', array('<code>' . $this->_context[1] . '</code>'))
+                    __('Failed to delete %s.', array('<code>' . $this->_context['handle'] . '</code>'))
                     . ' ' . __('Please check permissions on %s.', array('<code>/workspace/data-sources</code>')),
                     Alert::ERROR
                 );
             } else {
-                $pages = ResourceManager::getAttachedPages(ResourceManager::RESOURCE_TYPE_DS, $this->_context[1]);
+                $pages = ResourceManager::getAttachedPages(ResourceManager::RESOURCE_TYPE_DS, $this->_context['handle']);
 
                 foreach ($pages as $page) {
-                    ResourceManager::detach(ResourceManager::RESOURCE_TYPE_DS, $this->_context[1], $page['id']);
+                    ResourceManager::detach(ResourceManager::RESOURCE_TYPE_DS, $this->_context['handle'], $page['id']);
                 }
+
+                /**
+                 * After deleting the Datasource file. Target file path is provided.
+                 *
+                 * @delegate DatasourcePostDelete
+                 * @since Symphony 3.0.0
+                 * @param string $context
+                 * '/blueprints/datasources/'
+                 * @param string $file
+                 *  The path to the Datasource file
+                 * @param string $handle
+                 *  The handle of the Datasource
+                 */
+                Symphony::ExtensionManager()->notifyMembers('DatasourcePostDelete', '/blueprints/datasources/', array(
+                    'file' => DATASOURCES . "/data." . $this->_context['handle'] . ".php",
+                    'handle' => $this->_context['handle'],
+                ));
 
                 redirect(SYMPHONY_URL . '/blueprints/datasources/');
             }
@@ -1145,7 +1171,7 @@ class contentBlueprintsDatasources extends ResourcesPage
 
     public function __actionNew()
     {
-        if (array_key_exists('save', $_POST['action'])) {
+        if (is_array($_POST['action']) && array_key_exists('save', $_POST['action'])) {
             return $this->__formAction();
         }
     }
@@ -1161,6 +1187,8 @@ class contentBlueprintsDatasources extends ResourcesPage
             $this->_errors['name'] = __('This is a required field');
         } elseif (strpos($fields['name'], '\\') !== false) {
             $this->_errors['name'] = __('This field contains invalid characters') . ' (\\)';
+        } elseif (!preg_match('/^\p{L}/u', $fields['name'])) {
+            $this->_errors['name'] = __('The name of the data source must begin with a letter.');
         }
 
         if ($fields['source'] == 'static_xml') {
@@ -1169,7 +1197,7 @@ class contentBlueprintsDatasources extends ResourcesPage
             } else {
                 $xml_errors = null;
 
-                General::validateXML($fields['static_xml'], $xml_errors, false, new XsltProcess());
+                General::validateXML($fields['static_xml'], $xml_errors, false, new XSLTProcess());
 
                 if (!empty($xml_errors)) {
                     $this->_errors['static_xml'] = __('XML is invalid.');
@@ -1204,8 +1232,11 @@ class contentBlueprintsDatasources extends ResourcesPage
             }
         }
 
-        $classname = Lang::createHandle($fields['name'], 255, '_', false, true, array('@^[^a-z\d]+@i' => '', '/[^\w-\.]/i' => ''));
+        $classname = Lang::createHandle($fields['name'], 255, '_', false, true, array('@^[^a-z\d]+@i' => '', '/[^\w\-\.]/i' => ''));
+        // XML wants dashes
         $rootelement = str_replace('_', '-', $classname);
+        // PHP wants underscores
+        $classname = str_replace('-', '_', $classname);
 
         // Check to make sure the classname is not empty after handlisation.
         if (empty($classname) && !isset($this->_errors['name'])) {
@@ -1217,10 +1248,10 @@ class contentBlueprintsDatasources extends ResourcesPage
         $isDuplicate = false;
         $queueForDeletion = null;
 
-        if ($this->_context[0] == 'new' && is_file($file)) {
+        if ($this->_context['action'] === 'new' && is_file($file)) {
             $isDuplicate = true;
-        } elseif ($this->_context[0] == 'edit') {
-            $existing_handle = $this->_context[1];
+        } elseif ($this->_context['action'] === 'edit') {
+            $existing_handle = $this->_context['handle'];
 
             if ($classname != $existing_handle && is_file($file)) {
                 $isDuplicate = true;
@@ -1284,6 +1315,7 @@ class contentBlueprintsDatasources extends ResourcesPage
                         $params['requiredparam'] = trim($fields['required_url_param']);
                         $params['negateparam'] = trim($fields['negate_url_param']);
                         $params['paramoutput'] = $fields['param'];
+                        $params['paramxml'] = $fields['paramxml'];
                         $params['sort'] = $fields['sort'];
 
                         break;
@@ -1299,6 +1331,7 @@ class contentBlueprintsDatasources extends ResourcesPage
                         $params['redirectonrequired'] = $fields['redirect_on_required'];
                         $params['requiredparam'] = trim($fields['required_url_param']);
                         $params['negateparam'] = trim($fields['negate_url_param']);
+                        $params['sort'] = $fields['sort'];
 
                         break;
                     case 'static_xml':
@@ -1340,6 +1373,7 @@ class contentBlueprintsDatasources extends ResourcesPage
                         $params['requiredparam'] = trim($fields['required_url_param']);
                         $params['negateparam'] = trim($fields['negate_url_param']);
                         $params['paramoutput'] = $fields['param'];
+                        $params['paramxml'] = $fields['paramxml'];
                         $params['sort'] = $fields['sort'];
                         $params['htmlencode'] = $fields['html_encode'];
                         $params['associatedentrycounts'] = $fields['associated_entry_counts'];
@@ -1361,7 +1395,7 @@ class contentBlueprintsDatasources extends ResourcesPage
                 $dsShell = str_replace('<!-- SOURCE -->', addslashes($source), $dsShell);
             }
 
-            if ($this->_context[0] == 'new') {
+            if ($this->_context['action'] === 'new') {
                 /**
                  * Prior to creating the Datasource, the file path where it will be written to
                  * is provided and well as the contents of that file.
@@ -1383,6 +1417,8 @@ class contentBlueprintsDatasources extends ResourcesPage
                  *  being the `field_id` and the value the filter.
                  * @param array $dependencies
                  *  An array of dependencies that this datasource has
+                 * @param string $source
+                 *  The source of the datasource's data
                  */
                 Symphony::ExtensionManager()->notifyMembers('DatasourcePreCreate', '/blueprints/datasources/', array(
                     'file' => $file,
@@ -1390,7 +1426,8 @@ class contentBlueprintsDatasources extends ResourcesPage
                     'params' => $params,
                     'elements' => $elements,
                     'filters' => $filters,
-                    'dependencies' => $dependencies
+                    'dependencies' => $dependencies,
+                    'source' => $source
                 ));
             } else {
                 /**
@@ -1405,8 +1442,6 @@ class contentBlueprintsDatasources extends ResourcesPage
                  *  The path to the Datasource file
                  * @param string $contents
                  *  The contents for this Datasource as a string passed by reference
-                 * @param array $dependencies
-                 *  An array of dependencies that this datasource has
                  * @param array $params
                  *  An array of all the `$dsParam*` values
                  * @param array $elements
@@ -1414,14 +1449,19 @@ class contentBlueprintsDatasources extends ResourcesPage
                  * @param array $filters
                  *  An associative array of all the filters for this datasource with the key
                  *  being the `field_id` and the value the filter.
+                 * @param array $dependencies
+                 *  An array of dependencies that this datasource has
+                 * @param string $source
+                 *  The source of the datasource's data
                  */
                 Symphony::ExtensionManager()->notifyMembers('DatasourcePreEdit', '/blueprints/datasources/', array(
                     'file' => $file,
                     'contents' => &$dsShell,
-                    'dependencies' => $dependencies,
                     'params' => $params,
                     'elements' => $elements,
-                    'filters' => $filters
+                    'filters' => $filters,
+                    'dependencies' => $dependencies,
+                    'source' => $source
                 ));
             }
 
@@ -1451,9 +1491,11 @@ class contentBlueprintsDatasources extends ResourcesPage
                     General::deleteFile($queueForDeletion);
 
                     // Update pages that use this DS
-                    $pages = PageManager::fetch(false, array('data_sources', 'id'), array("
-                        `data_sources` REGEXP '[[:<:]]" . $existing_handle . "[[:>:]]'
-                    "));
+                    $pages = (new PageManager)
+                        ->select(['data_sources', 'id'])
+                        ->where(['data_sources' => ['regexp' => '[[:<:]]' . $existing_handle . '[[:>:]]']])
+                        ->execute()
+                        ->rows();
 
                     if (is_array($pages) && !empty($pages)) {
                         foreach ($pages as $page) {
@@ -1464,7 +1506,7 @@ class contentBlueprintsDatasources extends ResourcesPage
                     }
                 }
 
-                if ($this->_context[0] == 'new') {
+                if ($this->_context['action'] === 'new') {
                     /**
                      * After creating the Datasource, the path to the Datasource file is provided
                      *
@@ -1499,7 +1541,7 @@ class contentBlueprintsDatasources extends ResourcesPage
                     ));
                 }
 
-                redirect(SYMPHONY_URL . '/blueprints/datasources/edit/'.$classname.'/'.($this->_context[0] == 'new' ? 'created' : 'saved') . '/');
+                redirect(SYMPHONY_URL . '/blueprints/datasources/edit/'.$classname.'/'.($this->_context['action'] === 'new' ? 'created' : 'saved') . '/');
             }
         }
     }
@@ -1565,7 +1607,7 @@ class contentBlueprintsDatasources extends ResourcesPage
             }
             if (is_array($val)) {
                 $val = array_map('addslashes', $val);
-                $val = "array(" . PHP_EOL . "        '" . implode("'," . PHP_EOL . "        '", $val) . "'" . PHP_EOL . '        );';
+                $val = "array(" . PHP_EOL . "        '" . implode("'," . PHP_EOL . "        '", $val) . "'" . PHP_EOL . '    );';
                 $var_list .= '    public $dsParam' . strtoupper(addslashes($key)) . ' = ' . $val . PHP_EOL;
             } elseif (trim($val) !== '') {
                 $var_list .= '    public $dsParam' . strtoupper(addslashes($key)) . " = '" . addslashes($val) . "';" . PHP_EOL;
@@ -1639,7 +1681,7 @@ class contentBlueprintsDatasources extends ResourcesPage
         $info = $gateway->getInfoLast();
 
         // 28 is CURLE_OPERATION_TIMEDOUT
-        if ($info['curl_error'] == 28) {
+        if ($info['curl_errno'] === 28) {
             $error = __('Request timed out. %d second limit reached.', array($timeout));
             return false;
         } elseif ($data === false || $info['http_code'] != 200) {

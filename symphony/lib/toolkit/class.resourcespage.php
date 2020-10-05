@@ -15,6 +15,27 @@
 abstract class ResourcesPage extends AdministrationPage
 {
     /**
+     * The Resources page has /action/handle/flag/ context.
+     * eg. /edit/1/saved/
+     *
+     * @param array $context
+     * @param array $parts
+     * @return array
+     */
+    public function parseContext(array &$context, array $parts)
+    {
+        // Order is important!
+        $params = array_fill_keys(array('action', 'handle', 'flag'), null);
+
+        if (isset($parts[2])) {
+            $extras = preg_split('/\//', $parts[2], -1, PREG_SPLIT_NO_EMPTY);
+            list($params['action'], $params['handle'], $params['flag']) = $extras;
+        }
+
+        $context = array_filter($params);
+    }
+
+    /**
      * This method is invoked from the `Sortable` class and it contains the
      * logic for sorting (or unsorting) the resource index. It provides a basic
      * wrapper to the `ResourceManager`'s `fetch()` method.
@@ -33,7 +54,7 @@ abstract class ResourcesPage extends AdministrationPage
      *  An associative array of params (usually populated from the URL) that this
      *  function uses. The current implementation will use `type` and `unsort` keys
      * @throws Exception
-     * @throws SymphonyErrorPage
+     * @throws SymphonyException
      * @return array
      *  An associative of the resource as determined by `ResourceManager::fetch`
      */
@@ -56,7 +77,7 @@ abstract class ResourcesPage extends AdministrationPage
 
         // By default, sorting information are retrieved from
         // the filesystem and stored inside the `Configuration` object
-        if (is_null($sort) && is_null($order)) {
+        if (is_null($sort)) {
             $sort = ResourceManager::getSortingField($type);
             $order = ResourceManager::getSortingOrder($type);
 
@@ -80,7 +101,7 @@ abstract class ResourcesPage extends AdministrationPage
      */
     public function pagesFlatView()
     {
-        $pages = PageManager::fetch(false, array('id'));
+        $pages = (new PageManager)->select(['id'])->execute()->rows();
 
         foreach ($pages as &$p) {
             $p['title'] = PageManager::resolvePageTitle($p['id']);
@@ -106,6 +127,7 @@ abstract class ResourcesPage extends AdministrationPage
     {
         $manager = ResourceManager::getManagerFromType($resource_type);
         $friendly_resource = ($resource_type === ResourceManager::RESOURCE_TYPE_EVENT) ? __('Event') : __('DataSource');
+        $context = Administration::instance()->getPageCallback();
 
         $this->setPageType('table');
 
@@ -135,6 +157,37 @@ abstract class ResourcesPage extends AdministrationPage
             )
         );
 
+        /**
+         * Allows the creation of custom table columns for each resource. Called
+         * after all the table headers columns have been added.
+         *
+         * @delegate AddCustomResourceColumn
+         * @since Symphony 3.0.0
+         * @param string $context
+         *  '/blueprints/datasources/' or '/blueprints/events/'
+         * @param array $columns
+         *  An array of the current columns, passed by reference
+         * @param string $sort
+         *  The sort field
+         * @param string $order
+         *  The sort order
+         * @param int $resource_type
+         *  The resource type, i.e. `ResourceManager::RESOURCE_TYPE_EVENT` or
+         *  `ResourceManager::RESOURCE_TYPE_DATASOURCE`.
+         * @param array $resources
+         *  The resources array
+         * @param object $manager
+         *  The resources manager
+         */
+        Symphony::ExtensionManager()->notifyMembers('AddCustomResourceColumn', $context['pageroot'], [
+            'columns' => &$columns,
+            'sort' => $sort,
+            'order' => $order,
+            'resource_type' => $resource_type,
+            'resources' => $resources,
+            'manager' => $manager,
+        ]);
+
         $aTableHead = Sortable::buildTableHeaders($columns, $sort, $order, (isset($_REQUEST['filter']) ? '&amp;filter=' . $_REQUEST['filter'] : ''));
 
         $aTableBody = array();
@@ -142,18 +195,13 @@ abstract class ResourcesPage extends AdministrationPage
         if (!is_array($resources) || empty($resources)) {
             $aTableBody = array(Widget::TableRow(array(Widget::TableData(__('None found.'), 'inactive', null, count($aTableHead))), 'odd'));
         } else {
-            $context = Administration::instance()->getPageCallback();
-
             foreach ($resources as $r) {
                 $action = 'edit';
                 $status = null;
                 $locked = null;
 
                 // Locked resources
-                if (
-                    isset($r['can_parse']) && $r['can_parse'] !== true ||
-                    ($resource_type === ResourceManager::RESOURCE_TYPE_DS && $r['source']['name'] === 'Dynamic_xml')
-                ) {
+                if (isset($r['can_parse']) && $r['can_parse'] !== true) {
                     $action = 'info';
                     $status = 'status-notice';
                     $locked = array(
@@ -206,7 +254,7 @@ abstract class ResourcesPage extends AdministrationPage
                 foreach ($pages as $p) {
                     ++$i;
                     $pagelinks[] = Widget::Anchor(
-                        $p['title'],
+                        General::sanitize($p['title']),
                         SYMPHONY_URL . '/blueprints/pages/edit/' . $p['id'] . '/'
                     )->generate() . (count($pages) > $i ? (($i % 10) == 0 ? '<br />' : ', ') : '');
                 }
@@ -231,8 +279,43 @@ abstract class ResourcesPage extends AdministrationPage
                 }
 
                 $author = Widget::TableData($author);
+                $tableData = [$name, $section, $pagelinks, $author];
 
-                $aTableBody[] = Widget::TableRow(array($name, $section, $pagelinks, $author), $status);
+                /**
+                 * Allows Extensions to inject custom table data for each Resource
+                 * into the Resource Index
+                 *
+                 * @delegate AddCustomResourceColumnData
+                 * @since Symphony 3.0.0
+                 * @param string $context
+                 *  '/blueprints/datasources/' or '/blueprints/events/'
+                 * @param array $tableData
+                 *  An array of `Widget::TableData`, passed by reference
+                 * @param array $columns
+                 *  An array of the current columns
+                 * @param int $resource_type
+                 *  The resource type, i.e. `ResourceManager::RESOURCE_TYPE_EVENT` or
+                 *  `ResourceManager::RESOURCE_TYPE_DATASOURCE`.
+                 * @param array $resource
+                 *  The resource array
+                 * @param string $action
+                 *  The name of the action
+                 * @param string $status
+                 *  The status of the row
+                 * @param bool $locked
+                 *  If the resource is locked, i.e., read-only
+                 */
+                Symphony::ExtensionManager()->notifyMembers('AddCustomResourceColumnData', '/system/authors/', [
+                    'tableData' => &$tableData,
+                    'columns' => $columns,
+                    'resource_type' => $resource_type,
+                    'resource' => $r,
+                    'action' => $action,
+                    'status' => $status,
+                    'locked' => $locked,
+                ]);
+
+                $aTableBody[] = Widget::TableRow($tableData, $status);
             }
         }
 
@@ -269,8 +352,8 @@ abstract class ResourcesPage extends AdministrationPage
         $group_detach['options'][] = array('detach-all-pages', false, __('All'));
 
         foreach ($pages as $p) {
-            $group_attach['options'][] = array('attach-to-page-' . $p['id'], false, $p['title']);
-            $group_detach['options'][] = array('detach-from-page-' . $p['id'], false, $p['title']);
+            $group_attach['options'][] = array('attach-to-page-' . $p['id'], false, General::sanitize($p['title']));
+            $group_detach['options'][] = array('detach-from-page-' . $p['id'], false, General::sanitize($p['title']));
         }
 
         $options[] = $group_attach;
@@ -284,7 +367,7 @@ abstract class ResourcesPage extends AdministrationPage
          * @delegate AddCustomActions
          * @since Symphony 2.3.2
          * @param string $context
-         * '/blueprints/datasources/' or '/blueprints/events/'
+         *  '/blueprints/datasources/' or '/blueprints/events/'
          * @param array $options
          *  An array of arrays, where each child array represents an option
          *  in the With Selected menu. Options should follow the same format
@@ -316,6 +399,8 @@ abstract class ResourcesPage extends AdministrationPage
     public function __actionIndex($resource_type)
     {
         $manager = ResourceManager::getManagerFromType($resource_type);
+        $resource_name = str_replace('Manager', '', $manager);
+        $delegate_path = strtolower($resource_name);
         $checked = (is_array($_POST['items'])) ? array_keys($_POST['items']) : null;
         $context = Administration::instance()->getPageCallback();
 
@@ -347,7 +432,29 @@ abstract class ResourcesPage extends AdministrationPage
                         // Don't allow Extension resources to be deleted. RE: #2027
                         if (stripos($path, EXTENSIONS) === 0) {
                             continue;
-                        } elseif (!General::deleteFile($path)) {
+                        }
+                        
+                        /**
+                         * Prior to deleting the Resource file. Target file path is provided.
+                         *
+                         * @since Symphony 3.0.0
+                         * @param string $context
+                         * '/blueprints/{$resource_name}/'
+                         * @param string $file
+                         *  The path to the Resource file
+                         * @param string $handle
+                         *  The handle of the Resource
+                         */
+                        Symphony::ExtensionManager()->notifyMembers(
+                            "{$resource_name}PreDelete",
+                            $context['pageroot'],
+                            array(
+                                'file' => $path,
+                                'handle' => $handle,
+                            )
+                        );
+
+                        if (!General::deleteFile($path)) {
                             $folder = str_replace(DOCROOT, '', $path);
                             $folder = str_replace('/' . basename($path), '', $folder);
 
@@ -363,6 +470,26 @@ abstract class ResourcesPage extends AdministrationPage
                             foreach ($pages as $page) {
                                 ResourceManager::detach($resource_type, $handle, $page['id']);
                             }
+
+                            /**
+                             * After deleting the Resource file. Target file path is provided.
+                             *
+                             * @since Symphony 3.0.0
+                             * @param string $context
+                             * '/blueprints/{$resource_name}/'
+                             * @param string $file
+                             *  The path to the Resource file
+                             * @param string $handle
+                             *  The handle of the Resource
+                             */
+                            Symphony::ExtensionManager()->notifyMembers(
+                                "{$resource_name}PostDelete",
+                                "/blueprints/{$delegate_path}/",
+                                array(
+                                    'file' => $path,
+                                    'handle' => $handle,
+                                )
+                            );
                         }
                     }
 
@@ -384,11 +511,9 @@ abstract class ResourcesPage extends AdministrationPage
                         }
                     }
 
-                    if ($canProceed) {
-                        redirect(Administration::instance()->getCurrentPageURL());
-                    }
+                    redirect(Administration::instance()->getCurrentPageURL());
                 } elseif (preg_match('/^(at|de)?tach-all-pages$/', $_POST['with-selected'])) {
-                    $pages = PageManager::fetch(false, array('id'));
+                    $pages = (new PageManager)->select(['id'])->execute()->rows();
 
                     if (substr($_POST['with-selected'], 0, 6) == 'detach') {
                         foreach ($checked as $handle) {

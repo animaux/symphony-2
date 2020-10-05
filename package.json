@@ -1,21 +1,31 @@
 {
   "name": "symphonycms",
-  "version": "2.7.0",
+  "version": "3.0.0",
   "homepage": "https://www.getsymphony.com",
   "repository": {
     "type": "git",
-    "url": "https://github.com/symphonycms/symphony-2.git"
+    "url": "https://github.com/symphonycms/symphonycms.git"
   },
   "license": "MIT",
+  "scripts": {
+    "build": "grunt",
+    "test": "grunt unit",
+    "integration": "grunt integration",
+    "watch": "grunt watch",
+    "stan": "php vendor/phpstan/phpstan/phpstan.phar analyse --memory-limit 512M -c tests/phpstan.neon symphony"
+  },
   "devDependencies": {
-    "grunt": "~1.0.1",
+    "grunt": "~1.1.0",
     "grunt-autoprefixer": "~3.0.4",
+    "grunt-cli": "^1.3.2",
     "grunt-contrib-concat": "~1.0.1",
-    "grunt-contrib-jshint": "~1.0.0",
-    "grunt-contrib-uglify": "~1.0.1",
-    "grunt-contrib-watch": "~1.0.0",
-    "grunt-csso": "~1.0.0",
+    "grunt-contrib-jshint": "~2.1.0",
+    "grunt-contrib-uglify": "~4.0.1",
+    "grunt-contrib-watch": "~1.1.0",
+    "grunt-curl": "^2.5.1",
+    "grunt-csso": "~2.2.4",
     "grunt-git-rev-parse": "^0.1.5",
-    "grunt-phpcs": "^0.4.0"
+    "grunt-phpcs": "^0.4.0",
+    "grunt-phpunit": "^0.3.6"
   }
 }

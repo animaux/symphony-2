@@ -104,23 +104,22 @@ abstract class Page
     );
 
     /**
-     * The HTTP status code of the page using the `HTTP_STATUSES` constants
-     *
-     * @deprecated Since Symphony 2.3.2, this has been deprecated. It will be
-     * removed in Symphony 3.0
-     * @see $this->setHttpStatus and self::$HTTP_STATUSES
-     *
-     * @var integer
-     */
-    protected $_status = null;
-
-    /**
      * This stores the headers that will be sent when this page is
      * generated as an associative array of header=>value.
      *
      * @var array
      */
     protected $_headers = array();
+
+    /**
+     *  An associative array describing this pages context. This
+     *  can include the section handle, the current entry_id, the page
+     *  name and any flags such as 'saved' or 'created'. This variable
+     *  often provided in delegates so extensions can manipulate based
+     *  off the current context or add new keys.
+     * @var array
+     */
+    protected $_context = [];
 
     /**
      * Initialises the Page object by setting the headers to empty
@@ -239,8 +238,6 @@ abstract class Page
     public function setHttpStatus($status_code)
     {
         $this->addHeaderToPage('Status', null, $status_code);
-        // Assure we clear the legacy value
-        $this->_status = null;
     }
 
     /**
@@ -253,11 +250,6 @@ abstract class Page
      */
     public function getHttpStatusCode()
     {
-        // Legacy check
-        if ($this->_status != null) {
-            $this->setHttpStatus($this->_status);
-        }
-
         if (isset($this->_headers['status'])) {
             return $this->_headers['status']['response_code'];
         }
@@ -276,20 +268,38 @@ abstract class Page
     }
 
     /**
-     * This function calls `__renderHeaders()`.
+     * This function prepares any data needed for generation.
+     * The default implementation simply captures the $context variable.
+     * into the object's $_context property.
      *
-     * @see __renderHeaders()
+     * @param array $context
+     *  An associative array describing this pages context.
+     * @return void
+     */
+    public function build(array $context = [])
+    {
+        $this->_context = $context;
+    }
+
+    /**
+     * This function should generate the content to send to the client.
+     * The base implementation returns an empty body.
+     * This function calls `renderHeaders()`.
+     *
+     * @see renderHeaders()
+     * @return string
      */
     public function generate($page = null)
     {
-        $this->__renderHeaders();
+        $this->renderHeaders();
+        return '';
     }
 
     /**
      * This method calls php's `header()` function
      * in order to set the HTTP status code properly on all platforms.
      *
-     * @see https://github.com/symphonycms/symphony-2/issues/1558#issuecomment-10663716
+     * @see https://github.com/symphonycms/symphonycms/issues/1558#issuecomment-10663716
      *
      * @param integer $status_code
      */
@@ -299,18 +309,28 @@ abstract class Page
     }
 
     /**
-     * Iterates over the `$_headers` for this page
-     * and outputs them using PHP's header() function.
+     * Iterates over the `$_headers` for this page and outputs them using PHP's
+     * header() function. Since Symphony 3.0.0, this will add additional Pragma
+     * and Expires headers when the request is made over HTTP 1.0 and we are
+     * sending a Cache-Control header
      */
-    protected function __renderHeaders()
+    protected function renderHeaders()
     {
-        if (!is_array($this->_headers) || empty($this->_headers)) {
-            return;
+        // When the request was made using HTTP 1.0 and the Cache Control header
+        // was set to 'no-cache', add the Pragma and Expires headers. RE: #2205.
+        // Thanks to Symfony HttpFoundation for the idea as well.
+        if (strpos(server_safe('SERVER_PROTOCOL'), 'HTTP/1.0') !== false) {
+            if (
+                isset($this->_headers['cache-control']['header'])
+                && strpos($this->_headers['cache-control']['header'], 'no-cache') !== false
+            ) {
+                $this->addHeaderToPage('Pragma', 'no-cache');
+                $this->addHeaderToPage('Expires', 'Mon, 12 Dec 1982 06:14:00 GMT');
+            }
         }
 
-        // Legacy check
-        if ($this->_status != null) {
-            $this->setHttpStatus($this->_status);
+        if (!is_array($this->_headers) || empty($this->_headers)) {
+            return;
         }
 
         foreach ($this->_headers as $key => $value) {
@@ -328,7 +348,7 @@ abstract class Page
      * This function will check to ensure that this post request is not larger than
      * what the server is set to handle. If it is, a notice is shown.
      *
-     * @link https://github.com/symphonycms/symphony-2/issues/1187
+     * @link https://github.com/symphonycms/symphonycms/issues/1187
      * @since Symphony 2.5.2
      */
     public function isRequestValid()

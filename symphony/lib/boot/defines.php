@@ -5,11 +5,24 @@
  */
 
 /**
+ * The filesystem path to the `root` folder, i.e.
+ * the folder containing all other Symphony directories
+ * @var string
+ */
+define_safe('DOCROOT', realpath(__DIR__ . '/../../..'));
+
+/**
  * Used to determine if Symphony has been loaded, useful to prevent
  * files from being accessed directly.
  * @var boolean
  */
 define_safe('__IN_SYMPHONY__', true);
+
+/**
+ * The filesystem path to the `install` folder
+ * @var string
+ */
+define_safe('INSTALL', DOCROOT . '/install');
 
 /**
  * The filesystem path to the `manifest` folder
@@ -211,11 +224,32 @@ define_safe('TWO_WEEKS', (60*60*24*14));
 define_safe('HTTPS', server_safe('HTTPS'));
 
 /**
- * Returns the current host, ie. google.com
+ * Returns the current host, e.g. google.com
  * @var string
  */
 $http_host = server_safe('HTTP_HOST');
-define_safe('HTTP_HOST', function_exists('idn_to_utf8') ? idn_to_utf8($http_host) : $http_host);
+if (function_exists('idn_to_utf8')) {
+    // In PHP 7.2, `idn_to_utf8` should not be called with default parameters,
+    // because the default for `variant` has been deprecated. However, the
+    // alternative variant `INTL_IDNA_VARIANT_UTS46` was not introduced before
+    // PHP 5.4, so we must be careful.
+    // https://wiki.php.net/rfc/deprecate-and-remove-intl_idna_variant_2003
+    // https://bugs.php.net/bug.php?id=75609
+    // @deprecated: This 'hack' can be removed later; when dropping PHP < 5.4,
+    // `idn_to_utf8($http_host, 0, INTL_IDNA_VARIANT_UTS46)` can be used
+    // exclusively.
+    if (defined('INTL_IDNA_VARIANT_UTS46')) {
+        $host_utf8 = idn_to_utf8($http_host, 0, INTL_IDNA_VARIANT_UTS46);
+    } else {
+        $host_utf8 = idn_to_utf8($http_host);
+    }
+
+    if ($host_utf8 !== false) {
+        $http_host = $host_utf8;
+    }
+    unset($host_utf8);
+}
+define_safe('HTTP_HOST', $http_host);
 unset($http_host);
 
 /**
@@ -234,10 +268,11 @@ define_safe('HTTP_USER_AGENT', server_safe('HTTP_USER_AGENT'));
  * If HTTPS is on, `__SECURE__` will be set to true, otherwise false. Use union of
  * the `HTTPS` environmental variable and the X-Forwarded-Proto header to allow
  * downstream proxies to inform the webserver of secured downstream connections
- * @var string|boolean
+ * @var boolean
  */
-define_safe('__SECURE__',
-    (HTTPS == 'on' || server_safe('HTTP_X_FORWARDED_PROTO') == 'https')
+define_safe(
+    '__SECURE__',
+    (HTTPS === 'on' || server_safe('HTTP_X_FORWARDED_PROTO') === 'https')
 );
 
 /**
@@ -283,76 +318,6 @@ define_safe('APPLICATION_URL', URL . '/symphony');
  * @var string
  */
 define_safe('ASSETS_URL', APPLICATION_URL . '/assets');
-
-/**
- * The integer value for event-type resources.
- *
- * @deprecated Use ResourceManager::RESOURCE_TYPE_EVENT, this will be removed in Symphony 3.0.
- * @var integer
- */
-define_safe('RESOURCE_TYPE_EVENT', 20);
-
-/**
- * The integer value for datasource-type resources.
- *
- * @deprecated Use ResourceManager::RESOURCE_TYPE_DS, this will be removed in Symphony 3.0.
- * @var integer
- */
-define_safe('RESOURCE_TYPE_DS', 21);
-
- /**
-  * The constant for when an Entry is ok, that is, no errors have
-  * been raised by any of it's Fields.
-  * @deprecated Use Entry::__ENTRY_OK__, this will be removed in Symphony 3.0.
-  * @var integer
-  */
-define_safe('__ENTRY_OK__', 0);
-
-/**
- * The constant for an Entry if there is an error is raised by any of
- * it's Fields.
- * @deprecated Use Entry::__ENTRY_FIELD_ERROR__, this will be removed in Symphony 3.0.
- * @var integer
- */
-define_safe('__ENTRY_FIELD_ERROR__', 100);
-
-/**
- * Status when an extension is installed and enabled
- * @deprecated Use Extension::EXTENSION_ENABLED, this will be removed in Symphony 3.0.
- * @var integer
- */
-define_safe('EXTENSION_ENABLED', 10);
-
-/**
- * Status when an extension is disabled
- * @deprecated Use Extension::EXTENSION_DISABLED, this will be removed in Symphony 3.0.
- * @var integer
- */
-define_safe('EXTENSION_DISABLED', 11);
-
-/**
- * Status when an extension is in the file system, but has not been installed.
- * @deprecated Use Extension::EXTENSION_NOT_INSTALLED, this will be removed in Symphony 3.0.
- * @var integer
- */
-define_safe('EXTENSION_NOT_INSTALLED', 12);
-
-/**
- * Status when an extension version in the file system is different to
- * the version stored in the database for the extension
- * @deprecated Use Extension::EXTENSION_REQUIRES_UPDATE, this will be removed in Symphony 3.0.
- * @var integer
- */
-define_safe('EXTENSION_REQUIRES_UPDATE', 13);
-
-/**
- * Status when the extension is not compatible with the current version of
- * Symphony
- * @deprecated Use Extension::EXTENSION_NOT_COMPATIBLE, this will be removed in Symphony 3.0.
- * @since Symphony 2.3
- * @var integer
- */
-define_safe('EXTENSION_NOT_COMPATIBLE', 14);
 
 /**
  * Defines a constant for when the Profiler should be a complete snapshot of

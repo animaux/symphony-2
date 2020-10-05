@@ -14,6 +14,7 @@ class fieldTextarea extends Field implements ExportableField, ImportableField
         parent::__construct();
         $this->_name = __('Textarea');
         $this->_required = true;
+        $this->entryQueryFieldAdapter = new EntryQueryTextareaAdapter($this);
 
         // Set default
         $this->set('show_column', 'no');
@@ -28,24 +29,43 @@ class fieldTextarea extends Field implements ExportableField, ImportableField
     {
         return true;
     }
-
+    
+    public function canPrePopulate()
+    {
+        return true;
+    }
+    
     /*-------------------------------------------------------------------------
         Setup:
     -------------------------------------------------------------------------*/
 
     public function createTable()
     {
-        return Symphony::Database()->query(
-            "CREATE TABLE IF NOT EXISTS `tbl_entries_data_" . $this->get('id') . "` (
-              `id` int(11) unsigned NOT null auto_increment,
-              `entry_id` int(11) unsigned NOT null,
-              `value` MEDIUMTEXT,
-              `value_formatted` MEDIUMTEXT,
-              PRIMARY KEY  (`id`),
-              UNIQUE KEY `entry_id` (`entry_id`),
-              FULLTEXT KEY `value` (`value`)
-            ) ENGINE=MyISAM DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;"
-        );
+        return Symphony::Database()
+            ->create('tbl_entries_data_' . General::intval($this->get('id')))
+            ->ifNotExists()
+            ->fields([
+                'id' => [
+                    'type' => 'int(11)',
+                    'auto' => true,
+                ],
+                'entry_id' => 'int(11)',
+                'value' => [
+                    'type' => 'MEDIUMTEXT',
+                    'null' => true,
+                ],
+                'value_formatted' => [
+                    'type' => 'MEDIUMTEXT',
+                    'null' => true,
+                ],
+            ])
+            ->keys([
+                'id' => 'primary',
+                'entry_id' => 'unique',
+                'value' => 'fulltext',
+            ])
+            ->execute()
+            ->success();
     }
 
 /*-------------------------------------------------------------------------
@@ -62,11 +82,11 @@ class fieldTextarea extends Field implements ExportableField, ImportableField
         }
 
         if ($validate === true) {
-            if (!General::validateXML($result, $errors, false, new XsltProcess)) {
+            if (!General::validateXML($result, $errors, false, new XSLTProcess)) {
                 $result = html_entity_decode($result, ENT_QUOTES, 'UTF-8');
                 $result = $this->__replaceAmpersands($result);
 
-                if (!General::validateXML($result, $errors, false, new XsltProcess)) {
+                if (!General::validateXML($result, $errors, false, new XSLTProcess)) {
                     return false;
                 }
             }
@@ -146,7 +166,7 @@ class fieldTextarea extends Field implements ExportableField, ImportableField
         }
 
         $value = isset($data['value']) ? $data['value'] : null;
-        $textarea = Widget::Textarea('fields'.$fieldnamePrefix.'['.$this->get('element_name').']'.$fieldnamePostfix, (int)$this->get('size'), 50, (strlen($value) != 0 ? General::sanitize($value) : null));
+        $textarea = Widget::Textarea('fields'.$fieldnamePrefix.'['.$this->get('element_name').']'.$fieldnamePostfix, (int)$this->get('size'), 50, (strlen($value) != 0 ? General::sanitizeDouble($value) : null));
 
         if ($this->get('formatter') != 'none') {
             $textarea->setAttribute('class', $this->get('formatter'));
@@ -355,8 +375,18 @@ class fieldTextarea extends Field implements ExportableField, ImportableField
         Filtering:
     -------------------------------------------------------------------------*/
 
+    /**
+     * @deprecated @since Symphony 3.0.0
+     * @see Field::buildDSRetrievalSQL()
+     */
     public function buildDSRetrievalSQL($data, &$joins, &$where, $andOperation = false)
     {
+        if (Symphony::Log()) {
+            Symphony::Log()->pushDeprecateWarningToLog(
+                get_called_class() . '::buildDSRetrievalSQL()',
+                'EntryQueryFieldAdapter::filter()'
+            );
+        }
         $field_id = $this->get('id');
 
         if (self::isFilterRegex($data[0])) {

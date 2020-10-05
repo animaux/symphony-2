@@ -7,7 +7,7 @@
  /**
   * The Cacheable class provides a wrapper around an `iCache` interface
   * and provides basic CRUD functionality for caching. Historically,
-  * this class was hardcoded to use MySQL, but since Symphony 2.4 this
+  * this class was hardcoded to use Database, but since Symphony 2.4 this
   * may not be the case anymore.
   */
 
@@ -35,7 +35,7 @@ class Cacheable
      */
     public function __construct($cacheProvider = null)
     {
-        if (($cacheProvider instanceof MySQL)) {
+        if (($cacheProvider instanceof Database)) {
             $cache = new CacheDatabase($cacheProvider);
             $this->cacheProvider = $cache;
         } elseif (
@@ -162,52 +162,5 @@ class Cacheable
         }
 
         return $data;
-    }
-
-/*-------------------------------------------------------------------------
-    Deprecated:
--------------------------------------------------------------------------*/
-
-    /**
-     * @deprecated This function will be removed in Symphony 3.0. Use `read()` instead.
-     *
-     * @param string $hash
-     *  The hash of the Cached object, as defined by the user
-     * @return mixed
-     */
-    public function check($hash)
-    {
-        if (Symphony::Log()) {
-            Symphony::Log()->pushDeprecateWarningToLog('Cacheable::check()', 'Cacheable::read()');
-        }
-        return $this->read($hash);
-    }
-
-    /**
-     * @deprecated This function will be removed in Symphony 3.0. Use `delete()` instead.
-     *
-     * @param string $hash
-     *  The user defined hash of the data
-     * @return boolean
-     */
-    public function forceExpiry($hash)
-    {
-        if (Symphony::Log()) {
-            Symphony::Log()->pushDeprecateWarningToLog('Cacheable::forceExpiry()', 'Cacheable::delete()');
-        }
-        return $this->delete($hash);
-    }
-
-    /**
-     * @deprecated This function will be removed in Symphony 3.0. Use `delete()` instead.
-     *
-     * @return boolean
-     */
-    public function clean()
-    {
-        if (Symphony::Log()) {
-            Symphony::Log()->pushDeprecateWarningToLog('Cacheable::forceExpiry()', 'Cacheable::delete()');
-        }
-        return $this->delete();
     }
 }

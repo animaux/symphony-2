@@ -32,7 +32,7 @@ abstract class Symphony implements Singleton
 
     /**
      * An instance of the `Database` class
-     * @var MySQL
+     * @var Database
      */
     private static $Database = null;
 
@@ -59,13 +59,13 @@ abstract class Symphony implements Singleton
      * An instance of the Cookie class
      * @var Cookie
      */
-    public static $Cookie = null;
+    private static $Cookie = null;
 
     /**
      * An instance of the currently logged in Author
      * @var Author
      */
-    public static $Author = null;
+    private static $Author = null;
 
     /**
      * A previous exception that has been fired. Defaults to null.
@@ -100,15 +100,15 @@ abstract class Symphony implements Singleton
         Lang::initialize();
         Lang::set(self::$Configuration->get('lang', 'symphony'));
 
-        self::initialiseCookie();
+        // Initialize session support
+        static::initialiseSessionHandler();
+        static::initialiseCookie();
 
         // If the user is not a logged in Author, turn off the verbose error messages.
-        if (!self::isLoggedIn() && is_null(self::$Author)) {
-            GenericExceptionHandler::$enabled = false;
-        }
+        ExceptionHandler::$enabled = static::isLoggedIn() && static::Author();
 
         // Engine is ready.
-        self::$Profiler->sample('Engine Initialisation');
+        static::Profiler()->sample('Engine Initialisation');
     }
 
     /**
@@ -120,8 +120,26 @@ abstract class Symphony implements Singleton
     {
         // Initialise logging
         self::initialiseLog();
-        GenericExceptionHandler::initialise(self::Log());
-        GenericErrorHandler::initialise(self::Log());
+        ExceptionHandler::initialise(self::Log());
+        ErrorHandler::initialise(self::Log());
+    }
+
+    /**
+     * Setter for the Symphony Session Handling system.
+     *
+     * This function also defines a constant, `__SYM_COOKIE_PATH__`.
+     *
+     * @since Symphony 3.0.0
+     * @throws Exception
+     */
+    public static function initialiseSessionHandler()
+    {
+        define_safe('__SYM_COOKIE_PATH__', DIRROOT === '' ? '/' : DIRROOT);
+
+        $session = Session::start(TWO_WEEKS, __SYM_COOKIE_PATH__);
+        if (!$session) {
+            throw new Exception('Session failed to start, no session id found');
+        }
     }
 
     /**
@@ -134,13 +152,40 @@ abstract class Symphony implements Singleton
      */
     public static function Engine()
     {
-        if (class_exists('Administration', false)) {
+        if (defined('APP_MODE') && APP_MODE === 'administration') {
             return Administration::instance();
+        } elseif (defined('APP_MODE') && APP_MODE === 'frontend') {
+            return Frontend::instance();
+        // @deprecated @since Symphony 3.0.0
+        // This acts as a compat layer. Will be removed.
+        } elseif (class_exists('Administration', false)) {
+            return Administration::instance();
+        // @deprecated @since Symphony 3.0.0
+        // This acts as a compat layer. Will be removed.
         } elseif (class_exists('Frontend', false)) {
             return Frontend::instance();
         } else {
             throw new Exception(__('No suitable engine object found'));
         }
+    }
+
+    /**
+     * Returns the current engine namespace.
+     * This is used when firing delegates, to scope them properly.
+     * Currently, it returns '/backend/' when the APP_MODE is 'administration'.
+     * Otherwise, it returns '/APP_MODE/'.
+     *
+     * @since Symphony 3.0.0
+     * @see getPageNamespace()
+     * @return string
+     *  The name of the engine's namespace
+     */
+    public static function getEngineNamespace()
+    {
+        if (APP_MODE === 'administration') {
+            return '/backend/';
+        }
+        return '/' . APP_MODE . '/';
     }
 
     /**
@@ -228,8 +273,8 @@ abstract class Symphony implements Singleton
 
         self::$Log = new Log($filename);
         self::$Log->setArchive((self::Configuration()->get('archive', 'log') == '1' ? true : false));
-        self::$Log->setMaxSize(intval(self::Configuration()->get('maxsize', 'log')));
-        self::$Log->setDateTimeFormat(__SYM_DATETIME_FORMAT__);
+        self::$Log->setMaxSize(self::Configuration()->get('maxsize', 'log'));
+        self::$Log->setFilter(self::Configuration()->get('filter', 'log'));
 
         if (self::$Log->open(Log::APPEND, self::Configuration()->get('write_mode', 'file')) == '1') {
             self::$Log->initialise('Symphony Log');
@@ -253,21 +298,13 @@ abstract class Symphony implements Singleton
      * defined in the Symphony configuration. The cookie will last two
      * weeks.
      *
-     * This function also defines two constants, `__SYM_COOKIE_PATH__`
-     * and `__SYM_COOKIE_PREFIX__`.
-     *
-     * @deprecated Prior to Symphony 2.3.2, the constant `__SYM_COOKIE_PREFIX_`
-     *  had a typo where it was missing the second underscore. Symphony will
-     *  support both constants, `__SYM_COOKIE_PREFIX_` and `__SYM_COOKIE_PREFIX__`
-     *  until Symphony 3.0
+     * This function also defines a constant, `__SYM_COOKIE_PREFIX__`.
      */
     public static function initialiseCookie()
     {
-        define_safe('__SYM_COOKIE_PATH__', DIRROOT === '' ? '/' : DIRROOT);
-        define_safe('__SYM_COOKIE_PREFIX_', self::Configuration()->get('cookie_prefix', 'symphony'));
         define_safe('__SYM_COOKIE_PREFIX__', self::Configuration()->get('cookie_prefix', 'symphony'));
 
-        self::$Cookie = new Cookie(__SYM_COOKIE_PREFIX__, TWO_WEEKS, __SYM_COOKIE_PATH__);
+        self::$Cookie = new Cookie(__SYM_COOKIE_PREFIX__);
     }
 
     /**
@@ -289,7 +326,7 @@ abstract class Symphony implements Singleton
      *  When set to true, this function will always create a new
      *  instance of ExtensionManager, replacing self::$ExtensionManager.
      */
-    public static function initialiseExtensionManager($force=false)
+    public static function initialiseExtensionManager($force = false)
     {
         if (!$force && self::$ExtensionManager instanceof ExtensionManager) {
             return true;
@@ -298,7 +335,7 @@ abstract class Symphony implements Singleton
         self::$ExtensionManager = new ExtensionManager;
 
         if (!(self::$ExtensionManager instanceof ExtensionManager)) {
-            self::throwCustomError(__('Error creating Symphony extension manager.'));
+            static::throwCustomError(__('Error creating Symphony extension manager.'));
         }
     }
 
@@ -318,6 +355,7 @@ abstract class Symphony implements Singleton
      * is omitted, this function will set `$Database` to be of the `MySQL`
      * class.
      *
+     * @deprecated @since Symphony 3.0.0 - This function now does nothing
      * @since Symphony 2.3
      * @param StdClass $database (optional)
      *  The class to handle all Database operations, if omitted this function
@@ -327,19 +365,13 @@ abstract class Symphony implements Singleton
      */
     public static function setDatabase(StdClass $database = null)
     {
-        if (self::Database()) {
-            return true;
-        }
-
-        self::$Database = !is_null($database) ? $database : new MySQL;
-
         return true;
     }
 
     /**
      * Accessor for the current `$Database` instance.
      *
-     * @return MySQL
+     * @return Database
      */
     public static function Database()
     {
@@ -351,47 +383,26 @@ abstract class Symphony implements Singleton
      * using the connection details provided in the Symphony configuration. If any
      * errors occur whilst doing so, a Symphony Error Page is displayed.
      *
-     * @throws SymphonyErrorPage
+     * @throws SymphonyException
      * @return boolean
      *  This function will return true if the `$Database` was
      *  initialised successfully.
      */
     public static function initialiseDatabase()
     {
-        self::setDatabase();
         $details = self::Configuration()->get('database');
+        self::$Database = new Database($details);
 
         try {
-            if (!self::Database()->connect($details['host'], $details['user'], $details['password'], $details['port'], $details['db'])) {
+            static::Database()->connect();
+
+            if (!static::Database()->isConnected()) {
                 return false;
             }
 
-            if (!self::Database()->isConnected()) {
-                return false;
-            }
-
-            self::Database()->setPrefix($details['tbl_prefix']);
-            self::Database()->setCharacterEncoding();
-            self::Database()->setCharacterSet();
-            self::Database()->setTimeZone(self::Configuration()->get('timezone', 'region'));
-
-            if (isset($details['query_caching'])) {
-                if ($details['query_caching'] == 'off') {
-                    self::Database()->disableCaching();
-                } elseif ($details['query_caching'] == 'on') {
-                    self::Database()->enableCaching();
-                }
-            }
-
-            if (isset($details['query_logging'])) {
-                if ($details['query_logging'] == 'off') {
-                    self::Database()->disableLogging();
-                } elseif ($details['query_logging'] == 'on') {
-                    self::Database()->enableLogging();
-                }
-            }
+            static::Database()->setTimeZone(self::Configuration()->get('timezone', 'region'));
         } catch (DatabaseException $e) {
-            self::throwCustomError(
+            static::throwCustomError(
                 $e->getDatabaseErrorCode() . ': ' . $e->getDatabaseErrorMessage(),
                 __('Symphony Database Error'),
                 Page::HTTP_STATUS_ERROR,
@@ -439,42 +450,45 @@ abstract class Symphony implements Singleton
      */
     public static function login($username, $password, $isHash = false)
     {
-        $username = trim(self::Database()->cleanValue($username));
-        $password = trim(self::Database()->cleanValue($password));
+        $username = trim($username);
+        $password = trim($password);
 
         if (strlen($username) > 0 && strlen($password) > 0) {
-            $author = AuthorManager::fetch('id', 'ASC', 1, null, sprintf(
-                "`username` = '%s'",
-                $username
-            ));
+            $author = (new AuthorManager)
+                ->select()
+                ->username($username)
+                ->limit(1)
+                ->execute()
+                ->next();
 
-            if (!empty($author) && Cryptography::compare($password, current($author)->get('password'), $isHash)) {
-                self::$Author = current($author);
+            if ($author && Cryptography::compare($password, $author->get('password'), $isHash)) {
+                self::$Author = $author;
 
                 // Only migrate hashes if there is no update available as the update might change the tbl_authors table.
-                if (self::isUpgradeAvailable() === false && Cryptography::requiresMigration(self::$Author->get('password'))) {
+                // Also, only upgrade if the password is clear text.
+                if (!self::isUpgradeAvailable() && !$isHash && Cryptography::requiresMigration(self::$Author->get('password'))) {
                     self::$Author->set('password', Cryptography::hash($password));
 
-                    self::Database()->update(array('password' => self::$Author->get('password')), 'tbl_authors', sprintf(
-                        " `id` = %d", self::$Author->get('id')
-                    ));
+                    static::Database()
+                        ->update('tbl_authors')
+                        ->set(['password' => self::$Author->get('password')])
+                        ->where(['id' => self::$Author->get('id')])
+                        ->execute();
                 }
 
-                self::$Cookie->set('username', $username);
-                self::$Cookie->set('pass', self::$Author->get('password'));
-
-                self::Database()->update(array(
-                    'last_seen' => DateTimeObj::get('Y-m-d H:i:s')),
-                    'tbl_authors',
-                    sprintf(" `id` = %d", self::$Author->get('id'))
-                );
-
-                // Only set custom author language in the backend
-                if (class_exists('Administration', false)) {
-                    Lang::set(self::$Author->get('language'));
+                static::Cookie()->set('username', $username);
+                static::Cookie()->set('pass', self::$Author->get('password'));
+                // Is this a real login ?
+                if (!$isHash) {
+                    static::Cookie()->regenerate();
                 }
 
-                return true;
+                return static::Database()
+                    ->update('tbl_authors')
+                    ->set(['last_seen' => DateTimeObj::get('Y-m-d H:i:s')])
+                    ->where(['id' => self::$Author->get('id')])
+                    ->execute()
+                    ->success();
             }
         }
 
@@ -483,61 +497,52 @@ abstract class Symphony implements Singleton
 
     /**
      * Symphony allows Authors to login via the use of tokens instead of
-     * a username and password. A token is derived from concatenating the
-     * Author's username and password and applying the sha1 hash to
-     * it, from this, a portion of the hash is used as the token. This is a useful
-     * feature often used when setting up other Authors accounts or if an
-     * Author forgets their password.
+     * a username and password.
+     * A token is a random string of characters.
+     * This is a useful feature often used when setting up other Authors accounts or
+     * if an Author forgets their password.
      *
      * @param string $token
-     *  The Author token, which is a portion of the hashed string concatenation
-     *  of the Author's username and password
+     *  The Author token
      * @throws DatabaseException
      * @return boolean
      *  true if the Author is logged in, false otherwise
      */
     public static function loginFromToken($token)
     {
-        $token = self::Database()->cleanValue($token);
+        $token = trim($token);
 
-        if (strlen(trim($token)) == 0) {
+        if (strlen($token) === 0) {
             return false;
         }
 
-        if (strlen($token) == 6 || strlen($token) == 16) {
-            $row = self::Database()->fetchRow(0, sprintf(
-                "SELECT `a`.`id`, `a`.`username`, `a`.`password`
-                FROM `tbl_authors` AS `a`, `tbl_forgotpass` AS `f`
-                WHERE `a`.`id` = `f`.`author_id`
-                AND `f`.`expiry` > '%s'
-                AND `f`.`token` = '%s'
-                LIMIT 1",
-                DateTimeObj::getGMT('c'),
-                $token
-            ));
-
-            self::Database()->delete('tbl_forgotpass', sprintf(" `token` = '%s' ", $token));
+        $am = new AuthorManager;
+        // Try with the password reset
+        $rowByResetPass = $am->fetchByPasswordResetToken($token);
+        if ($rowByResetPass) {
+            $row = $rowByResetPass;
+            // consume the token
+            static::Database()
+                ->delete('tbl_forgotpass')
+                ->where(['token' => $token])
+                ->execute();
         } else {
-            $row = self::Database()->fetchRow(0, sprintf(
-                "SELECT `id`, `username`, `password`
-                FROM `tbl_authors`
-                WHERE SUBSTR(%s(CONCAT(`username`, `password`)), 1, 8) = '%s'
-                AND `auth_token_active` = 'yes'
-                LIMIT 1",
-                'SHA1',
-                $token
-            ));
+            // Fallback to auth token
+            $row = $am->fetchByAuthToken($token);
         }
 
         if ($row) {
-            self::$Author = AuthorManager::fetchByID($row['id']);
-            self::$Cookie->set('username', $row['username']);
-            self::$Cookie->set('pass', $row['password']);
-            self::Database()->update(array('last_seen' => DateTimeObj::getGMT('Y-m-d H:i:s')), 'tbl_authors', sprintf("
-                `id` = %d", $row['id']
-            ));
+            self::$Author = $row;
+            static::Cookie()->set('username', $row['username']);
+            static::Cookie()->set('pass', $row['password']);
+            static::Cookie()->regenerate();
 
-            return true;
+            return static::Database()
+                ->update('tbl_authors')
+                ->set(['last_seen' => DateTimeObj::get('Y-m-d H:i:s')])
+                ->where(['id' => $row['id']])
+                ->execute()
+                ->success();
         }
 
         return false;
@@ -551,7 +556,7 @@ abstract class Symphony implements Singleton
      */
     public static function logout()
     {
-        self::$Cookie->expire();
+        static::Cookie()->expire();
     }
 
     /**
@@ -565,30 +570,33 @@ abstract class Symphony implements Singleton
      */
     public static function isLoggedIn()
     {
-        // Check to see if Symphony exists, or if we already have an Author instance.
-        if (is_null(self::$_instance) || self::$Author) {
+        // Check to see if we already have an Author instance.
+        if (static::Author()) {
             return true;
         }
 
         // No author instance found, attempt to log in with the cookied credentials
-        return self::login(self::$Cookie->get('username'), self::$Cookie->get('pass'), true);
+        return static::login(static::Cookie()->get('username'), static::Cookie()->get('pass'), true);
     }
 
     /**
      * Returns the most recent version found in the `/install/migrations` folder.
-     * Returns a version string to be used in `version_compare()` if an updater
-     * has been found. Returns `FALSE` otherwise.
+     * Returns a semver version string if an updater
+     * has been found.
+     * Returns `false` otherwise.
      *
      * @since Symphony 2.3.1
      * @return string|boolean
      */
     public static function getMigrationVersion()
     {
-        if (self::isInstallerAvailable()) {
-            $migrations = scandir(DOCROOT . '/install/migrations');
-            $migration_file = end($migrations);
-            $migration_class = 'migration_' . str_replace('.', '', substr($migration_file, 0, -4));
-            return call_user_func(array($migration_class, 'getVersion'));
+        if (self::isInstallerAvailable() && class_exists('Updater')) {
+            $migrations = Updater::getAvailableMigrations();
+            $m = end($migrations);
+            if (!$m) {
+                return false;
+            }
+            return $m->getVersion();
         }
 
         return false;
@@ -604,16 +612,16 @@ abstract class Symphony implements Singleton
     {
         if (self::isInstallerAvailable()) {
             $migration_version = self::getMigrationVersion();
-            $current_version = Symphony::Configuration()->get('version', 'symphony');
+            $vc = new VersionComparator(Symphony::Configuration()->get('version', 'symphony'));
 
-            return version_compare($current_version, $migration_version, '<');
+            return $vc->lessThan($migration_version);
         }
 
         return false;
     }
 
     /**
-     * Checks if the installer/upgrader is available.
+     * Checks if the installer/updater is available.
      *
      * @since Symphony 2.3.1
      * @return boolean
@@ -626,9 +634,7 @@ abstract class Symphony implements Singleton
     /**
      * A wrapper for throwing a new Symphony Error page.
      *
-     * This methods sets the `GenericExceptionHandler::$enabled` value to `true`.
-     *
-     * @see core.SymphonyErrorPage
+     * @see core.SymphonyException
      * @param string|XMLElement $message
      *  A description for this error, which can be provided as a string
      *  or as an XMLElement.
@@ -644,12 +650,11 @@ abstract class Symphony implements Singleton
      * @param array $additional
      *  Allows custom information to be passed to the Symphony Error Page
      *  that the template may want to expose, such as custom Headers etc.
-     * @throws SymphonyErrorPage
+     * @throws SymphonyException
      */
     public static function throwCustomError($message, $heading = 'Symphony Fatal Error', $status = Page::HTTP_STATUS_ERROR, $template = 'generic', array $additional = array())
     {
-        GenericExceptionHandler::$enabled = true;
-        throw new SymphonyErrorPage($message, $heading, $template, $additional, $status);
+        throw new SymphonyException($message, $heading, $template, $additional, $status);
     }
 
     /**
@@ -728,267 +733,15 @@ abstract class Symphony implements Singleton
 
         return self::$namespace;
     }
+
+    /**
+     * Called by `symphony_launcher()`, this function is responsible for rendering the current
+     * page. Engines are required to implement it.
+     *
+     * @param string $page
+     * @return string
+     *  The http response body
+     */
+    abstract public function display($page);
 }
 
-/**
- * The `SymphonyErrorPageHandler` extends the `GenericExceptionHandler`
- * to allow the template for the exception to be provided from the `TEMPLATES`
- * directory
- */
-class SymphonyErrorPageHandler extends GenericExceptionHandler
-{
-    /**
-     * The render function will take a `SymphonyErrorPage` exception and
-     * output a HTML page. This function first checks to see if their is a custom
-     * template for this exception otherwise it reverts to using the default
-     * `usererror.generic.php`
-     *
-     * @param Throwable $e
-     *  The Throwable object
-     * @return string
-     *  An HTML string
-     */
-    public static function render($e)
-    {
-        // Validate the type, resolve to a 404 if not valid
-        if (!static::isValidThrowable($e)) {
-            $e = new FrontendPageNotFoundException();
-        }
-
-        if ($e->getTemplate() === false) {
-            Page::renderStatusCode($e->getHttpStatusCode());
-
-            if (isset($e->getAdditional()->header)) {
-                header($e->getAdditional()->header);
-            }
-
-            echo '<h1>Symphony Fatal Error</h1><p>'.$e->getMessage().'</p>';
-            exit;
-        }
-
-        include $e->getTemplate();
-    }
-}
-
-/**
- * `SymphonyErrorPage` extends the default `Exception` class. All
- * of these exceptions will halt execution immediately and return the
- * exception as a HTML page. By default the HTML template is `usererror.generic.php`
- * from the `TEMPLATES` directory.
- */
-
-class SymphonyErrorPage extends Exception
-{
-    /**
-     * A heading for the error page, this will be prepended to
-     * "Symphony Fatal Error".
-     * @return string
-     */
-    private $_heading;
-
-    /**
-     * A string for the error page template to use, defaults to 'generic'. This
-     * can be the name of any template file in the `TEMPLATES` directory.
-     * A template using the naming convention of `usererror.*.php`.
-     * @var string
-     */
-    private $_template = 'generic';
-
-    /**
-     * If the message as provided as an `XMLElement`, it will be saved to
-     * this parameter
-     * @var XMLElement
-     */
-    private $_messageObject = null;
-
-    /**
-     * An object of an additional information for this error page. Note that
-     * this is provided as an array and then typecast to an object
-     * @var StdClass
-     */
-    private $_additional = null;
-
-    /**
-     * A simple container for the response status code.
-     * Full value is setted usign `$Page->setHttpStatus()`
-     * in the template.
-     */
-    private $_status = Page::HTTP_STATUS_ERROR;
-
-    /**
-     * Constructor for SymphonyErrorPage sets it's class variables
-     *
-     * @param string|XMLElement $message
-     *  A description for this error, which can be provided as a string
-     *  or as an XMLElement.
-     * @param string $heading
-     *  A heading for the error page, by default this is "Symphony Fatal Error"
-     * @param string $template
-     *  A string for the error page template to use, defaults to 'generic'. This
-     *  can be the name of any template file in the `TEMPLATES` directory.
-     *  A template using the naming convention of `tpl.*.php`.
-     * @param array $additional
-     *  Allows custom information to be passed to the Symphony Error Page
-     *  that the template may want to expose, such as custom Headers etc.
-     * @param integer $status
-     *  Properly sets the HTTP status code for the response. Defaults to
-     *  `Page::HTTP_STATUS_ERROR`
-     */
-    public function __construct($message, $heading = 'Symphony Fatal Error', $template = 'generic', array $additional = array(), $status = Page::HTTP_STATUS_ERROR)
-    {
-        if ($message instanceof XMLElement) {
-            $this->_messageObject = $message;
-            $message = $this->_messageObject->generate();
-        }
-
-        parent::__construct($message);
-
-        $this->_heading = $heading;
-        $this->_template = $template;
-        $this->_additional = (object)$additional;
-        $this->_status = $status;
-    }
-
-    /**
-     * Accessor for the `$_heading` of the error page
-     *
-     * @return string
-     */
-    public function getHeading()
-    {
-        return $this->_heading;
-    }
-
-    /**
-     * Accessor for `$_messageObject`
-     *
-     * @return XMLElement
-     */
-    public function getMessageObject()
-    {
-        return $this->_messageObject;
-    }
-
-    /**
-     * Accessor for `$_additional`
-     *
-     * @return StdClass
-     */
-    public function getAdditional()
-    {
-        return $this->_additional;
-    }
-
-    /**
-     * Accessor for `$_status`
-     *
-     * @since Symphony 2.3.2
-     * @return integer
-     */
-    public function getHttpStatusCode()
-    {
-        return $this->_status;
-    }
-
-    /**
-     * Returns the path to the current template by looking at the
-     * `WORKSPACE/template/` directory, then at the `TEMPLATES`
-     * directory for the convention `usererror.*.php`. If the template
-     * is not found, `false` is returned
-     *
-     * @since Symphony 2.3
-     * @return string|false
-     *  String, which is the path to the template if the template is found,
-     *  false otherwise
-     */
-    public function getTemplate()
-    {
-        $format = '%s/usererror.%s.php';
-
-        if (file_exists($template = sprintf($format, WORKSPACE . '/template', $this->_template))) {
-            return $template;
-        } elseif (file_exists($template = sprintf($format, TEMPLATE, $this->_template))) {
-            return $template;
-        } else {
-            return false;
-        }
-    }
-
-    /**
-     * A simple getter to the template name in order to be able
-     * to identify which type of exception this is.
-     *
-     * @since Symphony 2.3.2
-     * @return string
-     */
-    public function getTemplateName()
-    {
-        return $this->_template;
-    }
-}
-
-/**
- * The `DatabaseExceptionHandler` provides a render function to provide
- * customised output for database exceptions. It displays the exception
- * message as provided by the Database.
- */
-class DatabaseExceptionHandler extends GenericExceptionHandler
-{
-    /**
-     * The render function will take a `DatabaseException` and output a
-     * HTML page.
-     *
-     * @param Throwable $e
-     *  The Throwable object
-     * @return string
-     *  An HTML string
-     */
-    public static function render($e)
-    {
-        // Validate the type, resolve to a 404 if not valid
-        if (!static::isValidThrowable($e)) {
-            $e = new FrontendPageNotFoundException();
-        }
-
-        $trace = $queries = null;
-
-        foreach ($e->getTrace() as $t) {
-            $trace .= sprintf(
-                '<li><code><em>[%s:%d]</em></code></li><li><code>&#160;&#160;&#160;&#160;%s%s%s();</code></li>',
-                $t['file'],
-                $t['line'],
-                (isset($t['class']) ? $t['class'] : null),
-                (isset($t['type']) ? $t['type'] : null),
-                $t['function']
-            );
-        }
-
-        if (is_object(Symphony::Database())) {
-            $debug = Symphony::Database()->debug();
-
-            if (!empty($debug)) {
-                foreach ($debug as $query) {
-                    $queries .= sprintf(
-                        '<li><em>[%01.4f]</em><code> %s;</code> </li>',
-                        (isset($query['execution_time']) ? $query['execution_time'] : null),
-                        htmlspecialchars($query['query'])
-                    );
-                }
-            }
-        }
-
-        $html = sprintf(
-            file_get_contents(self::getTemplate('fatalerror.database')),
-            $e->getDatabaseErrorMessage(),
-            $e->getQuery(),
-            $trace,
-            $queries
-        );
-
-        $html = str_replace('{ASSETS_URL}', ASSETS_URL, $html);
-        $html = str_replace('{SYMPHONY_URL}', SYMPHONY_URL, $html);
-        $html = str_replace('{URL}', URL, $html);
-
-        return $html;
-    }
-}

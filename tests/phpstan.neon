@@ -1,0 +1,13 @@
+parameters:
+	bootstrap: %rootDir%/../../../tests/phpstan_boot.php
+	excludes_analyse:
+		- %rootDir%/../../../symphony/template
+		- %rootDir%/../../../symphony/lib/toolkit/data-sources
+	earlyTerminatingFunctionCalls:
+		- redirect
+	level: 0
+	ignoreErrors:
+		- '#Undefined variable: \$(settings|validators|upload|about)#'
+		- '#Function gzopen64 not found\.#'
+		- '#Access to an undefined property Datasource::\$dsParam[A-z0-9_]+#'
+		- '#Access to an undefined property SectionEvent::\$(eParam[A-z0-9_]+|ROOTELEMENT)#'

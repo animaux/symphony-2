@@ -40,17 +40,6 @@ function redirect($url)
 }
 
 /**
- * Returns the current working directory, replacing any \
- *  with /. Use for Windows compatibility.
- *
- *  @return string
- */
-function getcwd_safe()
-{
-    return str_replace('\\', '/', getcwd());
-}
-
-/**
  * Checks that a constant has not been defined before defining
  * it. If the constant is already defined, this function will do
  * nothing, otherwise, it will set the constant
@@ -227,34 +216,27 @@ function is_session_empty()
 /**
  * Responsible for picking the launcher function and starting it.
  *
- *  @param string $mode (optional)
+ * @return void
  */
-function symphony($mode)
+function symphony()
 {
     $launcher = SYMPHONY_LAUNCHER;
-    $launcher($mode);
+    $launcher();
 }
 
 /**
  * Responsible for launching a standard symphony instance and
  * sending output to the browser.
  *
- *  @param string $mode (optional)
- *  @return integer
+ * @return void
  */
-function symphony_launcher($mode)
+function symphony_launcher()
 {
-    if (is_string($mode) && strtolower($mode) == 'administration') {
-        $renderer = Administration::instance();
-    } else {
-        $renderer = Frontend::instance();
-    }
-
-    $output = $renderer->display(getCurrentPage());
+    $output = Symphony::Engine()->display(getCurrentPage());
 
     // #1808
     if (server_safe('HTTP_MOD_REWRITE') != null) {
-        $output = file_get_contents(GenericExceptionHandler::getTemplate('fatalerror.rewrite'));
+        $output = file_get_contents(ExceptionRenderer::getTemplate('fatalerror.rewrite'));
         $output = str_replace('{ASSETS_URL}', ASSETS_URL, $output);
         $output = str_replace('{SYMPHONY_URL}', SYMPHONY_URL, $output);
         $output = str_replace('{URL}', URL, $output);
@@ -265,10 +247,7 @@ function symphony_launcher($mode)
     cleanup_session_cookies();
 
     echo $output;
-
-    return $renderer;
 }
-
 
 /**
  * The translation function accepts an English string and returns its translation

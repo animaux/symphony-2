@@ -80,21 +80,17 @@ class AdministrationPage extends HTMLPage
     public $_navigation = array();
 
     /**
-     *  An associative array describing this pages context. This
-     *  can include the section handle, the current entry_id, the page
-     *  name and any flags such as 'saved' or 'created'. This variable
-     *  often provided in delegates so extensions can manipulate based
-     *  off the current context or add new keys.
-     * @var array
-     */
-    public $_context = null;
-
-    /**
      * The class attribute of the `<body>` element for this page. Defaults
      * to an empty string
      * @var string
      */
     private $_body_class = '';
+
+    /**
+     * An array containing all errors that occured during the render of this page.
+     * @var array
+     */
+    protected $_errors = [];
 
     /**
      * Constructor calls the parent constructor to set up
@@ -121,7 +117,7 @@ class AdministrationPage extends HTMLPage
      */
     public function setPageType($type = 'form')
     {
-        $this->setBodyClass($type == 'form' || $type == 'single' ? 'single' : 'index');
+        $this->setBodyClass($type == 'form' || $type == 'page-single' ? 'page-single' : 'page-index');
     }
 
     /**
@@ -135,10 +131,38 @@ class AdministrationPage extends HTMLPage
      */
     public function setBodyClass($class)
     {
-        // Prevents duplicate "index" classes
-        if (!isset($this->_context['page']) || $this->_context['page'] !== 'index' || $class !== 'index') {
+        // Prevents duplicate "page-index" classes
+        if (!isset($this->_context['page']) || !in_array('page-index', [$this->_context['page'], $class])) {
             $this->_body_class .= $class;
         }
+
+        $this->Body->setAttribute('class', $this->_body_class);
+    }
+
+    /**
+     * Accessor for `$this->_errors` which contains the list of errors that occurred
+     * during the life cycle of this page.
+     *
+     * @since Symphony 3.0.0
+     * @return array
+     */
+    public function getErrors()
+    {
+        return $this->_errors;
+    }
+
+    /**
+     * Given the current page `$context` and the URL path parts, parse the context for
+     * the current page. This happens prior to the AdminPagePostCallback delegate
+     * being fired. The `$context` is passed by reference
+     *
+     * @since Symphony 3.0.0
+     * @param array $context
+     * @param array $parts
+     * @return void
+     */
+    public function parseContext(array &$context, array $parts)
+    {
     }
 
     /**
@@ -266,7 +290,7 @@ class AdministrationPage extends HTMLPage
             return;
         }
 
-        if ($this->Breadcrumbs instanceof XMLELement && count($this->Breadcrumbs->getChildrenByName('nav')) === 1) {
+        if ($this->Breadcrumbs instanceof XMLElement && count($this->Breadcrumbs->getChildrenByName('nav')) === 1) {
             $nav = $this->Breadcrumbs->getChildrenByName('nav');
             $nav = $nav[0];
 
@@ -342,11 +366,11 @@ class AdministrationPage extends HTMLPage
      *  name and any flags such as 'saved' or 'created'. This list is not exhaustive
      *  and extensions can add their own keys to the array.
      * @throws InvalidArgumentException
-     * @throws SymphonyErrorPage
+     * @throws SymphonyException
      */
-    public function build(array $context = array())
+    public function build(array $context = [])
     {
-        $this->_context = $context;
+        parent::build($context);
 
         if (!$this->canAccessPage()) {
             Administration::instance()->throwCustomError(
@@ -398,8 +422,14 @@ class AdministrationPage extends HTMLPage
             )
         );
 
+        $envJsonOptions = 0;
+        // Those are PHP 5.4+
+        if (defined('JSON_UNESCAPED_SLASHES') && defined('JSON_UNESCAPED_UNICODE')) {
+            $envJsonOptions = JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE;
+        }
+
         $this->addElementToHead(
-            new XMLElement('script', json_encode($environment), array(
+            new XMLElement('script', json_encode($environment, $envJsonOptions), array(
                 'type' => 'application/json',
                 'id' => 'environment'
             )),
@@ -434,9 +464,7 @@ class AdministrationPage extends HTMLPage
 
         $this->addHeaderToPage('Content-Type', 'text/html; charset=UTF-8');
         $this->addHeaderToPage('Cache-Control', 'no-cache, must-revalidate, max-age=0');
-        $this->addHeaderToPage('Expires', 'Mon, 12 Dec 1982 06:14:00 GMT');
         $this->addHeaderToPage('Last-Modified', gmdate('D, d M Y H:i:s') . ' GMT');
-        $this->addHeaderToPage('Pragma', 'no-cache');
 
         // If not set by another extension, lock down the backend
         if (!array_key_exists('x-frame-options', $this->headers())) {
@@ -472,13 +500,15 @@ class AdministrationPage extends HTMLPage
         $this->Contents->appendChild($this->Form);
 
         // Validate date time config
-        if (empty(__SYM_DATE_FORMAT__)) {
+        $dateFormat = defined('__SYM_DATE_FORMAT__') ? __SYM_DATE_FORMAT__ : null;
+        if (empty($dateFormat)) {
             $this->pageAlert(
                 __('Your <code>%s</code> file does not define a date format', array(basename(CONFIG))),
                 Alert::NOTICE
             );
         }
-        if (empty(__SYM_TIME_FORMAT__)) {
+        $timeFormat = defined('__SYM_TIME_FORMAT__') ? __SYM_TIME_FORMAT__ : null;
+        if (empty($timeFormat)) {
             $this->pageAlert(
                 __('Your <code>%s</code> file does not define a time format.', array(basename(CONFIG))),
                 Alert::NOTICE
@@ -504,7 +534,7 @@ class AdministrationPage extends HTMLPage
      *
      * @uses CanAccessPage
      *
-     * @link http://github.com/symphonycms/symphony-2/blob/master/symphony/assets/xml/navigation.xml
+     * @link http://github.com/symphonycms/symphonycms/blob/master/symphony/assets/xml/navigation.xml
      * @return boolean
      *  true if the Author can access the current page, false otherwise
      */
@@ -647,8 +677,8 @@ class AdministrationPage extends HTMLPage
 
         $this->Body->appendChild($this->Wrapper);
 
-        $this->__appendBodyId();
-        $this->__appendBodyClass($this->_context);
+        $this->appendBodyId();
+        $this->appendBodyAttributes($this->_context);
 
         /**
          * This is just prior to the page headers being rendered, and is suitable for changing them
@@ -668,7 +698,7 @@ class AdministrationPage extends HTMLPage
      * and converts all uppercase letters to lowercase and prefixes them
      * with a hyphen.
      */
-    private function __appendBodyId()
+    private function appendBodyId()
     {
         // trim "content" from beginning of class name
         $body_id = preg_replace("/^content/", '', get_class($this));
@@ -686,47 +716,38 @@ class AdministrationPage extends HTMLPage
         );
 
         if (!empty($body_id)) {
-            $this->Body->setAttribute('id', trim($body_id));
+            $this->Body->setAttribute('id', $body_id);
         }
     }
 
     /**
      * Given the context of the current page, which is an associative
      * array, this function will append the values to the page's body as
-     * classes. If an context value is numeric it will be prepended by 'id-',
-     * otherwise all classes will be prefixed by the context key.
+     * data attributes. If an context value is numeric it will be given
+     * the key 'id' otherwise all attributes will be prefixed by the context key.
+     *
+     * If the context value is an array, it will be JSON encoded.
      *
      * @param array $context
      */
-    private function __appendBodyClass(array $context = array())
+    private function appendBodyAttributes(array $context = array())
     {
-        $body_class = '';
-
         foreach ($context as $key => $value) {
             if (is_numeric($value)) {
-                $value = 'id-' . $value;
+                $key = 'id';
 
                 // Add prefixes to all context values by making the
-                // class be {key}-{value}. #1397 ^BA
+                // data-attribute be a handle of {key}. #1397 ^BA
             } elseif (!is_numeric($key) && isset($value)) {
-                // Skip arrays
-                if (is_array($value)) {
-                    $value = null;
-                } else {
-                    $value = str_replace('_', '-', $key) . '-'. $value;
-                }
+                $key = str_replace('_', '-', General::createHandle($key));
             }
 
-            if ($value !== null) {
-                $body_class .= trim($value) . ' ';
+            // JSON encode any array values
+            if (is_array($value)) {
+                $value = json_encode($value);
             }
-        }
 
-        $classes = array_merge(explode(' ', trim($body_class)), explode(' ', trim($this->_body_class)));
-        $body_class = trim(implode(' ', $classes));
-
-        if (!empty($body_class)) {
-            $this->Body->setAttribute('class', $body_class);
+            $this->Body->setAttribute('data-' . $key, $value);
         }
     }
 
@@ -769,17 +790,17 @@ class AdministrationPage extends HTMLPage
      *
      * @param string $type
      *  Either 'view' or 'action', by default this will be 'view'
-     * @throws SymphonyErrorPage
+     * @throws SymphonyException
      */
     public function __switchboard($type = 'view')
     {
-        if (!isset($this->_context[0]) || trim($this->_context[0]) === '') {
-            $context = 'index';
+        if (!isset($this->_context['action']) || trim($this->_context['action']) === '') {
+            $action = 'index';
         } else {
-            $context = $this->_context[0];
+            $action = $this->_context['action'];
         }
 
-        $function = ($type == 'action' ? '__action' : '__view') . ucfirst($context);
+        $function = ($type == 'action' ? '__action' : '__view') . ucfirst($action);
 
         if (!method_exists($this, $function)) {
             // If there is no action function, just return without doing anything
@@ -966,7 +987,7 @@ class AdministrationPage extends HTMLPage
      * This method fills the `$nav` array with value
      * from the `ASSETS/xml/navigation.xml` file
      *
-     * @link http://github.com/symphonycms/symphony-2/blob/master/symphony/assets/xml/navigation.xml
+     * @link http://github.com/symphonycms/symphonycms/blob/master/symphony/assets/xml/navigation.xml
      *
      * @since Symphony 2.3.2
      *
@@ -1035,71 +1056,69 @@ class AdministrationPage extends HTMLPage
     private function buildSectionNavigation(&$nav)
     {
         // Build the section navigation, grouped by their navigation groups
-        $sections = SectionManager::fetch(null, 'asc', 'sortorder');
+        $sections = (new SectionManager)->select()->sort('sortorder')->execute()->rows();
 
-        if (is_array($sections) && !empty($sections)) {
-            foreach ($sections as $s) {
-                $group_index = self::__navigationFindGroupIndex($nav, $s->get('navigation_group'));
+        foreach ($sections as $s) {
+            $group_index = self::__navigationFindGroupIndex($nav, $s->get('navigation_group'));
 
-                if ($group_index === false) {
-                    $group_index = General::array_find_available_index($nav, 0);
+            if ($group_index === false) {
+                $group_index = General::array_find_available_index($nav, 0);
 
-                    $nav[$group_index] = array(
-                        'name' => $s->get('navigation_group'),
-                        'type' => 'content',
-                        'index' => $group_index,
-                        'children' => array()
-                    );
-                }
+                $nav[$group_index] = array(
+                    'name' => $s->get('navigation_group'),
+                    'type' => 'content',
+                    'index' => $group_index,
+                    'children' => array()
+                );
+            }
 
-                $hasAccess = true;
-                $url = '/publish/' . $s->get('handle') . '/';
-                /**
-                 * Immediately after the core access rules allowed access to this page
-                 * (i.e. not called if the core rules denied it).
-                 * Extension developers must only further restrict access to it.
-                 * Extension developers must also take care of checking the current value
-                 * of the allowed parameter in order to prevent conflicts with other extensions.
-                 * `$context['allowed'] = $context['allowed'] && customLogic();`
-                 *
-                 * @delegate CanAccessPage
-                 * @since Symphony 2.7.0
-                 * @see doesAuthorHaveAccess()
-                 * @param string $context
-                 *  '/backend/'
-                 * @param bool $allowed
-                 *  A flag to further restrict access to the page, passed by reference
-                 * @param string $page_limit
-                 *  The computed page limit for the current page
-                 * @param string $page_url
-                 *  The computed page url for the current page
-                 * @param int $section.id
-                 *  The id of the section for this url
-                 * @param string $section.handle
-                 *  The handle of the section for this url
-                 */
-                Symphony::ExtensionManager()->notifyMembers('CanAccessPage', '/backend/', array(
-                    'allowed' => &$hasAccess,
-                    'page_limit' => 'author',
-                    'page_url' => $url,
+            $hasAccess = true;
+            $url = '/publish/' . $s->get('handle') . '/';
+            /**
+             * Immediately after the core access rules allowed access to this page
+             * (i.e. not called if the core rules denied it).
+             * Extension developers must only further restrict access to it.
+             * Extension developers must also take care of checking the current value
+             * of the allowed parameter in order to prevent conflicts with other extensions.
+             * `$context['allowed'] = $context['allowed'] && customLogic();`
+             *
+             * @delegate CanAccessPage
+             * @since Symphony 2.7.0
+             * @see doesAuthorHaveAccess()
+             * @param string $context
+             *  '/backend/'
+             * @param bool $allowed
+             *  A flag to further restrict access to the page, passed by reference
+             * @param string $page_limit
+             *  The computed page limit for the current page
+             * @param string $page_url
+             *  The computed page url for the current page
+             * @param int $section.id
+             *  The id of the section for this url
+             * @param string $section.handle
+             *  The handle of the section for this url
+             */
+            Symphony::ExtensionManager()->notifyMembers('CanAccessPage', '/backend/', array(
+                'allowed' => &$hasAccess,
+                'page_limit' => 'author',
+                'page_url' => $url,
+                'section' => array(
+                    'id' => $s->get('id'),
+                    'handle' => $s->get('handle')
+                ),
+            ));
+
+            if ($hasAccess) {
+                $nav[$group_index]['children'][] = array(
+                    'link' => $url,
+                    'name' => $s->get('name'),
+                    'type' => 'section',
                     'section' => array(
                         'id' => $s->get('id'),
                         'handle' => $s->get('handle')
                     ),
-                ));
-
-                if ($hasAccess) {
-                    $nav[$group_index]['children'][] = array(
-                        'link' => $url,
-                        'name' => $s->get('name'),
-                        'type' => 'section',
-                        'section' => array(
-                            'id' => $s->get('id'),
-                            'handle' => $s->get('handle')
-                        ),
-                        'visible' => ($s->get('hidden') == 'no' ? 'yes' : 'no')
-                    );
-                }
+                    'visible' => ($s->get('hidden') == 'no' ? 'yes' : 'no')
+                );
             }
         }
     }
@@ -1113,7 +1132,7 @@ class AdministrationPage extends HTMLPage
      * @param array $nav
      *  The navigation array that will receive nav nodes
      * @throws Exception
-     * @throws SymphonyErrorPage
+     * @throws SymphonyException
      */
     private function buildExtensionsNavigation(&$nav)
     {
@@ -1238,8 +1257,8 @@ class AdministrationPage extends HTMLPage
      * the navigation.
      *
      * @uses NavigationPostBuild
-     * @link https://github.com/symphonycms/symphony-2/blob/master/symphony/assets/xml/navigation.xml
-     * @link https://github.com/symphonycms/symphony-2/blob/master/symphony/lib/toolkit/class.extension.php
+     * @link https://github.com/symphonycms/symphonycms/blob/master/symphony/assets/xml/navigation.xml
+     * @link https://github.com/symphonycms/symphonycms/blob/master/symphony/lib/toolkit/class.extension.php
      */
     public function __buildNavigation()
     {

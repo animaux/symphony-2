@@ -15,6 +15,7 @@ class FieldCheckbox extends Field implements ExportableField, ImportableField
         parent::__construct();
         $this->_name = __('Checkbox');
         $this->_required = true;
+        $this->entryQueryFieldAdapter = new EntryQueryCheckboxAdapter($this);
 
         $this->set('required', 'no');
         $this->set('location', 'sidebar');
@@ -84,16 +85,28 @@ class FieldCheckbox extends Field implements ExportableField, ImportableField
 
     public function createTable()
     {
-        return Symphony::Database()->query(
-            "CREATE TABLE IF NOT EXISTS `tbl_entries_data_" . $this->get('id') . "` (
-              `id` int(11) unsigned NOT null auto_increment,
-              `entry_id` int(11) unsigned NOT null,
-              `value` enum('yes','no') NOT null default '".($this->get('default_state') == 'on' ? 'yes' : 'no')."',
-              PRIMARY KEY  (`id`),
-              UNIQUE KEY `entry_id` (`entry_id`),
-              KEY `value` (`value`)
-            ) ENGINE=MyISAM DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;"
-        );
+        return Symphony::Database()
+            ->create('tbl_entries_data_' . General::intval($this->get('id')))
+            ->ifNotExists()
+            ->fields([
+                'id' => [
+                    'type' => 'int(11)',
+                    'auto' => true,
+                ],
+                'entry_id' => 'int(11)',
+                'value' => [
+                    'type' => 'enum',
+                    'values' => ['yes', 'no'],
+                    'default' => $this->get('default_state') == 'on' ? 'yes' : 'no',
+                ]
+            ])
+            ->keys([
+                'id' => 'primary',
+                'entry_id' => 'unique',
+                'value' => 'key',
+            ])
+            ->execute()
+            ->success();
     }
 
     /*-------------------------------------------------------------------------
@@ -293,18 +306,20 @@ class FieldCheckbox extends Field implements ExportableField, ImportableField
         if ($mode === $modes->getPostdata) {
             return (
                 isset($data['value'])
-                && $data['value'] === 'yes'
-                    ? 'yes'
-                    : 'no'
+                    ? ($data['value'] === 'yes'
+                        ? 'yes'
+                        : 'no')
+                    : null
             );
 
             // Export formatted:
         } elseif ($mode === $modes->getValue) {
             return (
                 isset($data['value'])
-                && $data['value'] === 'yes'
-                    ? __('Yes')
-                    : __('No')
+                    ? ($data['value'] === 'yes'
+                        ? __('Yes')
+                        : __('No'))
+                    : __('None')
             );
 
             // Export boolean:
@@ -339,8 +354,18 @@ class FieldCheckbox extends Field implements ExportableField, ImportableField
         }
     }
 
+    /**
+     * @deprecated @since Symphony 3.0.0
+     * @see Field::buildDSRetrievalSQL()
+     */
     public function buildDSRetrievalSQL($data, &$joins, &$where, $andOperation = false)
     {
+        if (Symphony::Log()) {
+            Symphony::Log()->pushDeprecateWarningToLog(
+                get_called_class() . '::buildDSRetrievalSQL()',
+                'EntryQueryFieldAdapter::filter()'
+            );
+        }
         $field_id = $this->get('id');
         $default_state = ($this->get('default_state') == "on") ? 'yes' : 'no';
 
@@ -407,8 +432,18 @@ class FieldCheckbox extends Field implements ExportableField, ImportableField
         Sorting:
     -------------------------------------------------------------------------*/
 
+    /**
+     * @deprecated @since Symphony 3.0.0
+     * @see Field::buildSortingSQL()
+     */
     public function buildSortingSQL(&$joins, &$where, &$sort, $order = 'ASC')
     {
+        if (Symphony::Log()) {
+            Symphony::Log()->pushDeprecateWarningToLog(
+                get_called_class() . '::buildSortingSQL()',
+                'EntryQueryFieldAdapter::sort()'
+            );
+        }
         if ($this->isRandomOrder($order)) {
             $sort = 'ORDER BY RAND()';
         } else {
@@ -417,16 +452,27 @@ class FieldCheckbox extends Field implements ExportableField, ImportableField
                     SELECT %s
                     FROM tbl_entries_data_%d AS `ed`
                     WHERE entry_id = e.id
-                ) %s',
+                ) %s, `e`.`id` %s',
                 '`ed`.value',
                 $this->get('id'),
+                $order,
                 $order
             );
         }
     }
 
+    /**
+     * @deprecated @since Symphony 3.0.0
+     * @see Field::buildSortingSelectSQL()
+     */
     public function buildSortingSelectSQL($sort, $order = 'ASC')
     {
+        if (Symphony::Log()) {
+            Symphony::Log()->pushDeprecateWarningToLog(
+                get_called_class() . '::buildSortingSelectSQL()',
+                'EntryQueryFieldAdapter::sort()'
+            );
+        }
         return null;
     }
 

@@ -10,11 +10,11 @@
  * entries can be grouped, sorted and allows pagination. Results can be chained
  * from other `SectionDatasource`'s using output parameters.
  *
+ * @since Symphony 3.0.0, it is abstract
  * @since Symphony 2.3
  * @link http://getsymphony.com/learn/concepts/view/data-sources/
  */
-
-class SectionDatasource extends Datasource
+abstract class SectionDatasource extends Datasource
 {
     /**
      * An array of Field objects that this Datasource has created to display
@@ -32,26 +32,6 @@ class SectionDatasource extends Datasource
         'system:modification-date',
         'system:date' // deprecated
     );
-
-    /**
-     * Set's the Section ID that this Datasource will use as it's source
-     *
-     * @param integer $source
-     */
-    public function setSource($source)
-    {
-        $this->_source = (int)$source;
-    }
-
-    /**
-     * Return's the Section ID that this datasource is using as it's source
-     *
-     * @return integer
-     */
-    public function getSource()
-    {
-        return $this->_source;
-    }
 
     /**
      * If this Datasource requires System Parameters to be output, this function
@@ -95,7 +75,11 @@ class SectionDatasource extends Datasource
         if (is_array($group['records']) && !empty($group['records'])) {
             if (isset($group['records'][0])) {
                 $data = $group['records'][0]->getData();
-                $pool = FieldManager::fetch(array_keys($data));
+                $pool = (new FieldManager)
+                    ->select()
+                    ->fields(array_keys($data))
+                    ->execute()
+                    ->rowsIndexedByColumn('id');
                 self::$_fieldPool += $pool;
             }
 
@@ -150,7 +134,7 @@ class SectionDatasource extends Datasource
 
         foreach ($data as $field_id => $values) {
             if (!isset(self::$_fieldPool[$field_id]) || !is_object(self::$_fieldPool[$field_id])) {
-                self::$_fieldPool[$field_id] = FieldManager::fetch($field_id);
+                self::$_fieldPool[$field_id] = (new FieldManager)->select()->field($field_id)->execute()->next();
             }
 
             $this->processOutputParameters($entry, $field_id, $values);
@@ -160,7 +144,19 @@ class SectionDatasource extends Datasource
                     list($handle, $mode) = preg_split('/\s*:\s*/', $handle, 2);
 
                     if (self::$_fieldPool[$field_id]->get('element_name') == $handle) {
-                        self::$_fieldPool[$field_id]->appendFormattedElement($xEntry, $values, ($this->dsParamHTMLENCODE === 'yes' ? true : false), $mode, $entry->get('id'));
+                        try {
+                            self::$_fieldPool[$field_id]->appendFormattedElement($xEntry, $values, ($this->dsParamHTMLENCODE === 'yes' ? true : false), $mode, $entry->get('id'));
+                        } catch (Exception $ex) {
+                            if (Symphony::Log()) {
+                                Symphony::Log()->pushExceptionToLog($ex, true);
+                            }
+                            $this->appendFormattedError($handle, $xEntry, $ex);
+                        } catch (Throwable $ex) {
+                            if (Symphony::Log()) {
+                                Symphony::Log()->pushExceptionToLog($ex, true);
+                            }
+                            $this->appendFormattedError($handle, $xEntry, $ex);
+                        }
                     }
                 }
             }
@@ -174,7 +170,7 @@ class SectionDatasource extends Datasource
         if (in_array('system:date', $this->dsParamINCLUDEDELEMENTS)) {
             if (Symphony::Log()) {
                 Symphony::Log()->pushDeprecateWarningToLog('system:date', 'system:creation-date` or `system:modification-date', array(
-                    'message-format' => __('The `%s` data-source field is deprecated.')
+                    'message-format' => __('The `%s` data source field is deprecated.')
                 ));
             }
             $xDate = new XMLElement('system-date');
@@ -197,6 +193,26 @@ class SectionDatasource extends Datasource
     }
 
     /**
+     * Given an handle, it will create a XMLElement from its value.
+     * The Throwable's message will be put into an error node.
+     * The newly created XMLElement will then be appended to the $xEntry XMLElement.
+     *
+     * @param string $handle
+     *  The name of the new XMLElement
+     * @param XMLElement $xEntry
+     *  The XMLElement to append a child intro
+     * @param Throwable $ex
+     *  The Throwable's message to use
+     * @return void
+     */
+    private function appendFormattedError($handle, XMLElement &$xEntry, $ex)
+    {
+        $xmlField = new XMLElement($handle);
+        $xmlField->appendChild(new XMLElement('error', General::wrapInCDATA($ex->getMessage())));
+        $xEntry->appendChild($xmlField);
+    }
+
+    /**
      * An entry may be associated to other entries from various fields through
      * the section associations. This function will set the number of related
      * entries as attributes to the main `<entry>` element grouped by the
@@ -216,19 +232,22 @@ class SectionDatasource extends Datasource
         if (!empty($associated_entry_counts)) {
             foreach ($associated_entry_counts as $section_id => $fields) {
                 foreach ($this->_associated_sections as $section) {
-                    if ($section['id'] != $section_id) {
+                    if (General::intval($section['id']) !== General::intval($section_id)) {
                         continue;
                     }
 
                     // For each related field show the count (#2083)
                     foreach ($fields as $field_id => $count) {
                         $field_handle = FieldManager::fetchHandleFromID($field_id);
-                        if ($field_handle) {
-                            $xEntry->setAttribute($section['handle'] . '-' . $field_handle, (string)$count);
+                        $section_handle = $section['handle'];
+                        // Make sure attribute does not begin with a digit
+                        // @deprecated This needs to be removed in Symphony 4.0.0
+                        if (preg_match('/^[0-9]/', $section_handle)) {
+                            $section_handle = 'x-' . $section_handle;
                         }
-
-                        // Backwards compatibility (without field handle)
-                        $xEntry->setAttribute($section['handle'], (string)$count);
+                        if ($field_handle) {
+                            $xEntry->setAttribute($section_handle . '-' . $field_handle, (string)$count);
+                        }
                     }
                 }
             }
@@ -257,7 +276,6 @@ class SectionDatasource extends Datasource
 
         // Support the legacy parameter `ds-datasource-handle`
         $key = 'ds-' . $this->dsParamROOTELEMENT;
-        $singleParam = count($this->dsParamPARAMOUTPUT) == 1;
 
         foreach ($this->dsParamPARAMOUTPUT as $param) {
             // The new style of paramater is `ds-datasource-handle.field-handle`
@@ -266,32 +284,20 @@ class SectionDatasource extends Datasource
             if ($param === 'system:id') {
                 $this->_param_pool[$param_key][] = $entry->get('id');
 
-                if ($singleParam) {
-                    $this->_param_pool[$key][] = $entry->get('id');
-                }
             } elseif ($param === 'system:author') {
                 $this->_param_pool[$param_key][] = $entry->get('author_id');
 
-                if ($singleParam) {
-                    $this->_param_pool[$key][] = $entry->get('author_id');
-                }
             } elseif ($param === 'system:creation-date' || $param === 'system:date') {
                 if ($param === 'system:date' && Symphony::Log()) {
                     Symphony::Log()->pushDeprecateWarningToLog('system:date', 'system:creation-date', array(
-                        'message-format' => __('The `%s` data-source output parameter is deprecated.')
+                        'message-format' => __('The `%s` data source output parameter is deprecated.')
                     ));
                 }
                 $this->_param_pool[$param_key][] = $entry->get('creation_date');
 
-                if ($singleParam) {
-                    $this->_param_pool[$key][] = $entry->get('creation_date');
-                }
             } elseif ($param === 'system:modification-date') {
                 $this->_param_pool[$param_key][] = $entry->get('modification_date');
 
-                if ($singleParam) {
-                    $this->_param_pool[$key][] = $entry->get('modification_date');
-                }
             }
         }
     }
@@ -314,64 +320,66 @@ class SectionDatasource extends Datasource
 
         // Support the legacy parameter `ds-datasource-handle`
         $key = 'ds-' . $this->dsParamROOTELEMENT;
-        $singleParam = count($this->dsParamPARAMOUTPUT) == 1;
-
-        if ($singleParam && (!isset($this->_param_pool[$key]) || !is_array($this->_param_pool[$key]))) {
-            $this->_param_pool[$key] = array();
-        }
 
         foreach ($this->dsParamPARAMOUTPUT as $param) {
             if (self::$_fieldPool[$field_id]->get('element_name') !== $param) {
                 continue;
             }
 
-            // The new style of paramater is `ds-datasource-handle.field-handle`
+            // The new style of parameter is `ds-datasource-handle.field-handle`
             $param_key = $key . '.' . str_replace(':', '-', $param);
 
             if (!isset($this->_param_pool[$param_key]) || !is_array($this->_param_pool[$param_key])) {
                 $this->_param_pool[$param_key] = array();
             }
 
-            $param_pool_values = self::$_fieldPool[$field_id]->getParameterPoolValue($data, $entry->get('id'));
+            try {
+                $param_pool_values = self::$_fieldPool[$field_id]->getParameterPoolValue($data, $entry->get('id'));
+            } catch (Exception $ex) {
+                if (Symphony::Log()) {
+                    Symphony::Log()->pushExceptionToLog($ex, true);
+                }
+                $param_pool_values = ['error' => $ex->getMessage()];
+            } catch (Throwable $ex) {
+                if (Symphony::Log()) {
+                    Symphony::Log()->pushExceptionToLog($ex, true);
+                }
+                $param_pool_values = ['error' => $ex->getMessage()];
+            }
 
             if (is_array($param_pool_values)) {
                 $this->_param_pool[$param_key] = array_merge($param_pool_values, $this->_param_pool[$param_key]);
 
-                if ($singleParam) {
-                    $this->_param_pool[$key] = array_merge($param_pool_values, $this->_param_pool[$key]);
-                }
             } elseif (!is_null($param_pool_values)) {
                 $this->_param_pool[$param_key][] = $param_pool_values;
 
-                if ($singleParam) {
-                    $this->_param_pool[$key][] = $param_pool_values;
-                }
             }
         }
     }
 
     /**
-     * This function iterates over `dsParamFILTERS` and builds the relevant
-     * `$where` and `$joins` parameters with SQL. This SQL is generated from
-     * `Field->buildDSRetrievalSQL`. A third parameter, `$group` is populated
-     * with boolean from `Field->requiresSQLGrouping()`
+     * This function iterates over `dsParamFILTERS` and appends the relevant
+     * where and join operations.
+     * This SQL is generated with the Field's query builder.
      *
-     * @param string $where
-     * @param string $joins
-     * @param boolean $group
+     * @see Field::getEntryQueryFieldAdapter()
+     * @param EntryQuery $entryQuery
      * @throws Exception
      */
-    public function processFilters(&$where, &$joins, &$group)
+    public function processFilters(&$entryQuery)
     {
         if (!is_array($this->dsParamFILTERS) || empty($this->dsParamFILTERS)) {
             return;
         }
 
-        $pool = FieldManager::fetch(array_filter(array_keys($this->dsParamFILTERS), 'is_int'));
-        self::$_fieldPool += $pool;
-
-        if (!is_string($where)) {
-            $where = '';
+        $numericFilters = array_filter(array_keys($this->dsParamFILTERS), 'is_numeric');
+        if (!empty($numericFilters)) {
+            $pool = (new FieldManager)
+                ->select()
+                ->fields($numericFilters)
+                ->execute()
+                ->rowsIndexedByColumn('id');
+            self::$_fieldPool += $pool;
         }
 
         foreach ($this->dsParamFILTERS as $field_id => $filter) {
@@ -398,72 +406,48 @@ class SectionDatasource extends Datasource
 
             // Support system:id as well as the old 'id'. #1691
             if ($field_id === 'system:id' || $field_id === 'id') {
-                if ($filter_type == Datasource::FILTER_AND) {
-                    $value = array_map(function ($val) {
-                        return explode(',', $val);
-                    }, $value);
-                } else {
-                    $value = array($value);
+                if ($field_id === 'id' && Symphony::Log()) {
+                    Symphony::Log()->pushDeprecateWarningToLog('id', 'system:id', array(
+                        'message-format' => __('The `%s` data source filter is deprecated.')
+                    ));
                 }
-
-                foreach ($value as $v) {
-                    $c = 'IN';
-                    if (stripos($v[0], 'not:') === 0) {
-                        $v[0] = preg_replace('/^not:\s*/', null, $v[0]);
-                        $c = 'NOT IN';
-                    }
-
-                    // Cast all ID's to integers. (RE: #2191)
-                    $v = array_map(function ($val) {
-                        $val = General::intval($val);
-
-                        // General::intval can return -1, so reset that to 0
-                        // so there are no side effects for the following
-                        // array_sum and array_filter calls. RE: #2475
-                        if ($val === -1) {
-                            $val = 0;
-                        }
-
-                        return $val;
-                    }, $v);
-                    $count = array_sum($v);
-                    $v = array_filter($v);
-
-                    // If the ID was cast to 0, then we need to filter on 'id' = 0,
-                    // which will of course return no results, but without it the
-                    // Datasource will return ALL results, which is not the
-                    // desired behaviour. RE: #1619
-                    if ($count === 0) {
-                        $v[] = 0;
-                    }
-
-                    // If there are no ID's, no need to filter. RE: #1567
-                    if (!empty($v)) {
-                        $where .= " AND `e`.id " . $c . " (".implode(", ", $v).") ";
-                    }
-                }
+                $op = $filter_type === Datasource::FILTER_AND ? 'and' : 'or';
+                $entryQuery->filter('system:id', $value, $op);
+            // Dates
             } elseif ($field_id === 'system:creation-date' || $field_id === 'system:modification-date' || $field_id === 'system:date') {
                 if ($field_id === 'system:date' && Symphony::Log()) {
                     Symphony::Log()->pushDeprecateWarningToLog('system:date', 'system:creation-date` or `system:modification-date', array(
-                        'message-format' => __('The `%s` data-source filter is deprecated.')
+                        'message-format' => __('The `%s` data source filter is deprecated.')
                     ));
+                    $field_id = 'system:creation-date';
                 }
-                $date_joins = '';
-                $date_where = '';
-                $date = new FieldDate();
-                $date->buildDSRetrievalSQL($value, $date_joins, $date_where, ($filter_type == Datasource::FILTER_AND ? true : false));
-
-                // Replace the date field where with the `creation_date` or `modification_date`.
-                $date_where = preg_replace('/`t\d+`.date/', ($field_id !== 'system:modification-date') ? '`e`.creation_date_gmt' : '`e`.modification_date_gmt', $date_where);
-                $where .= $date_where;
+                $op = $filter_type === Datasource::FILTER_AND ? 'and' : 'or';
+                $entryQuery->filter($field_id, $value, $op);
+            // Field with EQFA
+            } elseif (self::$_fieldPool[$field_id]->getEntryQueryFieldAdapter()) {
+                $op = $filter_type === Datasource::FILTER_AND ? 'and' : 'or';
+                $entryQuery->filter(self::$_fieldPool[$field_id], $value, $op);
+            // Compat layer with the old API
             } else {
+                $where = '';
+                $joins = '';
                 if (!self::$_fieldPool[$field_id]->buildDSRetrievalSQL($value, $joins, $where, ($filter_type == Datasource::FILTER_AND ? true : false))) {
                     $this->_force_empty_result = true;
                     return;
                 }
 
-                if (!$group) {
-                    $group = self::$_fieldPool[$field_id]->requiresSQLGrouping();
+                if ($joins) {
+                    $joins = $entryQuery->replaceTablePrefix($joins);
+                    $entryQuery->unsafe()->unsafeAppendSQLPart('join', $joins);
+                }
+                if ($where) {
+                    $where = $entryQuery->replaceTablePrefix($where);
+                    $wherePrefix = $entryQuery->containsSQLParts('where') ? '' : 'WHERE 1 = 1';
+                    $entryQuery->unsafe()->unsafeAppendSQLPart('where', "$wherePrefix $where");
+                }
+
+                if (self::$_fieldPool[$field_id]->requiresSQLGrouping()) {
+                    $entryQuery->distinct();
                 }
             }
         }
@@ -472,14 +456,59 @@ class SectionDatasource extends Datasource
     public function execute(array &$param_pool = null)
     {
         $result = new XMLElement($this->dsParamROOTELEMENT);
-        $this->_param_pool = $param_pool;
-        $where = null;
-        $joins = null;
-        $group = false;
 
-        if (!$section = SectionManager::fetch((int)$this->getSource())) {
+        try {
+            $result = $this->generate($param_pool);
+        } catch (FrontendPageNotFoundException $e) {
+            // Work around. This ensures the 404 page is displayed and
+            // is not picked up by the default catch() statement below
+            FrontendPageNotFoundExceptionRenderer::render($e);
+        } catch (Exception $e) {
+            $result->appendChild(new XMLElement('error',
+                General::wrapInCDATA($e->getMessage() . ' on ' . $e->getLine() . ' of file ' . $e->getFile())
+            ));
+            return $result;
+        }
+
+        if ($this->_force_empty_result) {
+            $result = $this->emptyXMLSet();
+        }
+
+        if ($this->_negate_result) {
+            $result = $this->negateXMLSet();
+        }
+
+        return $result;
+    }
+
+    /**
+     * Creates the XML representation of this data source.
+     *
+     * @param array $param_pool
+     * @return XMLElement
+     */
+    public function generate(array &$param_pool = null)
+    {
+        $result = new XMLElement($this->dsParamROOTELEMENT);
+        $this->_param_pool = $param_pool;
+        $requiresPagination = (!isset($this->dsParamPAGINATERESULTS) ||
+            $this->dsParamPAGINATERESULTS === 'yes')
+            && isset($this->dsParamLIMIT) && General::intval($this->dsParamLIMIT) >= 0;
+
+        $section = (new SectionManager)
+            ->select()
+            ->section($this->getSource())
+            ->execute()
+            ->next();
+
+        if (!$section) {
             $about = $this->about();
-            trigger_error(__('The Section, %s, associated with the Data source, %s, could not be found.', array($this->getSource(), '<code>' . $about['name'] . '</code>')), E_USER_ERROR);
+            throw new Exception(
+                __(
+                    'The Section, %s, associated with the Data source, %s, could not be found.',
+                    [$this->getSource(), '<code>' . $about['name'] . '</code>']
+                )
+            );
         }
 
         $sectioninfo = new XMLElement('section', General::sanitize($section->get('name')), array(
@@ -526,32 +555,6 @@ class SectionDatasource extends Datasource
 
         $this->_can_process_system_parameters = $this->canProcessSystemParameters();
 
-        if (!isset($this->dsParamPAGINATERESULTS)) {
-            $this->dsParamPAGINATERESULTS = 'yes';
-        }
-
-        // Process Filters
-        $this->processFilters($where, $joins, $group);
-
-        // Process Sorting
-        if ($this->dsParamSORT == 'system:id') {
-            EntryManager::setFetchSorting('system:id', $this->dsParamORDER);
-        } elseif ($this->dsParamSORT == 'system:date' || $this->dsParamSORT == 'system:creation-date') {
-            if ($this->dsParamSORT === 'system:date' && Symphony::Log()) {
-                Symphony::Log()->pushDeprecateWarningToLog('system:date', 'system:creation-date', array(
-                    'message-format' => __('The `%s` data-source sort is deprecated.')
-                ));
-            }
-            EntryManager::setFetchSorting('system:creation-date', $this->dsParamORDER);
-        } elseif ($this->dsParamSORT == 'system:modification-date') {
-            EntryManager::setFetchSorting('system:modification-date', $this->dsParamORDER);
-        } else {
-            EntryManager::setFetchSorting(
-                FieldManager::fetchFieldIDFromElementName($this->dsParamSORT, $this->getSource()),
-                $this->dsParamORDER
-            );
-        }
-
         // combine `INCLUDEDELEMENTS`, `PARAMOUTPUT` and `GROUP` into an
         // array of field handles to optimise the `EntryManager` queries
         $datasource_schema = $this->dsParamINCLUDEDELEMENTS;
@@ -564,17 +567,25 @@ class SectionDatasource extends Datasource
             $datasource_schema[] = FieldManager::fetchHandleFromID($this->dsParamGROUP);
         }
 
-        $entries = EntryManager::fetchByPage(
-            ($this->dsParamPAGINATERESULTS === 'yes' && $this->dsParamSTARTPAGE > 0 ? $this->dsParamSTARTPAGE : 1),
-            $this->getSource(),
-            ($this->dsParamPAGINATERESULTS === 'yes' && $this->dsParamLIMIT >= 0 ? $this->dsParamLIMIT : null),
-            $where,
-            $joins,
-            $group,
-            (!$include_pagination_element ? true : false),
-            true,
-            array_unique($datasource_schema)
-        );
+        // Create our query object
+        $entriesQuery = (new EntryManager)
+            ->select($datasource_schema)
+            ->section($this->getSource());
+
+        // Process Filters
+        $this->processFilters($entriesQuery);
+
+        // Process Sorting
+        $entriesQuery->sort((string)$this->dsParamSORT, $this->dsParamORDER);
+
+        // Configure pagination in the query
+        if ($requiresPagination) {
+            $entriesQuery->paginate($this->dsParamSTARTPAGE, $this->dsParamLIMIT);
+        }
+
+        // Execute
+        $pagination = $entriesQuery->execute()->pagination();
+        $entries = $pagination->rows();
 
         /**
          * Immediately after building entries allow modification of the Data Source entries array
@@ -592,9 +603,11 @@ class SectionDatasource extends Datasource
             'filters' => $this->dsParamFILTERS
         ));
 
-        $entries_per_page = ($this->dsParamPAGINATERESULTS === 'yes' && isset($this->dsParamLIMIT) && $this->dsParamLIMIT >= 0 ? $this->dsParamLIMIT : $entries['total-entries']);
+        $entries_per_page = $requiresPagination
+            ? $pagination->pageSize()
+            : $pagination->totalEntries();
 
-        if (($entries['total-entries'] <= 0 || $include_pagination_element === true) && (!is_array($entries['records']) || empty($entries['records'])) || $this->dsParamSTARTPAGE == '0') {
+        if (empty($entries)) {
             if ($this->dsParamREDIRECTONEMPTY === 'yes') {
                 throw new FrontendPageNotFoundException;
             }
@@ -616,10 +629,10 @@ class SectionDatasource extends Datasource
 
                 if ($include_pagination_element) {
                     $pagination_element = General::buildPaginationElement(
-                        $entries['total-entries'],
-                        $entries['total-pages'],
+                        $pagination->totalEntries(),
+                        $pagination->totalPages(),
                         $entries_per_page,
-                        ($this->dsParamPAGINATERESULTS === 'yes' && $this->dsParamSTARTPAGE > 0 ? $this->dsParamSTARTPAGE : 1)
+                        $pagination->currentPage()
                     );
 
                     if ($pagination_element instanceof XMLElement && $result instanceof XMLElement) {
@@ -628,42 +641,50 @@ class SectionDatasource extends Datasource
                 }
             }
 
-            // If this datasource has a Limit greater than 0 or the Limit is not set
-            if (!isset($this->dsParamLIMIT) || $this->dsParamLIMIT > 0) {
-                if (!isset($this->dsParamASSOCIATEDENTRYCOUNTS) || $this->dsParamASSOCIATEDENTRYCOUNTS === 'yes') {
-                    $this->_associated_sections = $section->fetchChildAssociations();
+            if (!isset($this->dsParamASSOCIATEDENTRYCOUNTS) || $this->dsParamASSOCIATEDENTRYCOUNTS === 'yes') {
+                $this->_associated_sections = $section->fetchChildAssociations();
+            }
+
+            // If the datasource require's GROUPING
+            if (isset($this->dsParamGROUP)) {
+                if (!isset(self::$_fieldPool[$this->dsParamGROUP])) {
+                    self::$_fieldPool[$this->dsParamGROUP] = (new FieldManager)
+                        ->select()
+                        ->field($this->dsParamGROUP)
+                        ->execute()
+                        ->next();
+                }
+                if (self::$_fieldPool[$this->dsParamGROUP] == null) {
+                    throw new SymphonyException(vsprintf("The field used for grouping '%s' cannot be found.", $this->dsParamGROUP));
                 }
 
-                // If the datasource require's GROUPING
-                if (isset($this->dsParamGROUP)) {
-                    self::$_fieldPool[$this->dsParamGROUP] = FieldManager::fetch($this->dsParamGROUP);
+                $groups = self::$_fieldPool[$this->dsParamGROUP]->groupRecords($entries);
 
-                    if (self::$_fieldPool[$this->dsParamGROUP] == null) {
-                        throw new SymphonyErrorPage(vsprintf("The field used for grouping '%s' cannot be found.", $this->dsParamGROUP));
+                foreach ($groups as $element => $group) {
+                    foreach ($group as $g) {
+                        $result->appendChild(
+                            $this->processRecordGroup($element, $g)
+                        );
                     }
-
-                    $groups = self::$_fieldPool[$this->dsParamGROUP]->groupRecords($entries['records']);
-
-                    foreach ($groups as $element => $group) {
-                        foreach ($group as $g) {
-                            $result->appendChild(
-                                $this->processRecordGroup($element, $g)
-                            );
-                        }
-                    }
-                } else {
-                    if (isset($entries['records'][0])) {
-                        $data = $entries['records'][0]->getData();
-                        $pool = FieldManager::fetch(array_keys($data));
+                }
+            } else {
+                if (isset($entries[0])) {
+                    $data = $entries[0]->getData();
+                    if (!empty($data)) {
+                        $pool = (new FieldManager)
+                            ->select()
+                            ->fields(array_keys($data))
+                            ->execute()
+                            ->rowsIndexedByColumn('id');
                         self::$_fieldPool += $pool;
                     }
+                }
 
-                    foreach ($entries['records'] as $entry) {
-                        $xEntry = $this->processEntry($entry);
+                foreach ($entries as $entry) {
+                    $xEntry = $this->processEntry($entry);
 
-                        if ($xEntry instanceof XMLElement) {
-                            $result->appendChild($xEntry);
-                        }
+                    if ($xEntry instanceof XMLElement) {
+                        $result->appendChild($xEntry);
                     }
                 }
             }

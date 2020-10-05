@@ -10,55 +10,8 @@
  * @since Symphony 2.3.1
  * @link http://getsymphony.com/learn/concepts/view/events/
  */
-
-abstract class SectionEvent extends Event
+class SectionEvent extends FilterableEvent
 {
-    /**
-     * An associative array of results from the filters that have run
-     * on this event.
-     * @var array
-     */
-    public $filter_results = array();
-
-    /**
-     * An associative array of errors from the filters that have run
-     * on this event.
-     * @var array
-     */
-    public $filter_errors = array();
-
-    /**
-     * This method will construct XML that represents the result of
-     * an Event filter.
-     *
-     * @param string $name
-     *  The name of the filter
-     * @param string $status
-     *  The status of the filter, either passed or failed.
-     * @param XMLElement|string $message
-     *  Optionally, an XMLElement or string to be appended to this
-     *  `<filter>` element. XMLElement allows for more complex return
-     *  types.
-     * @param array $attributes
-     *  An associative array of additional attributes to add to this
-     *  `<filter>` element
-     * @return XMLElement
-     */
-    public static function buildFilterElement($name, $status, $message = null, array $attributes = null)
-    {
-        $filter = new XMLElement('filter', (!$message || is_object($message) ? null : $message), array('name' => $name, 'status' => $status));
-
-        if ($message instanceof XMLElement) {
-            $filter->appendChild($message);
-        }
-
-        if (is_array($attributes)) {
-            $filter->setAttributeArray($attributes);
-        }
-
-        return $filter;
-    }
-
     /**
      * Appends errors generated from fields during the execution of an Event
      *
@@ -77,7 +30,7 @@ abstract class SectionEvent extends Event
         )));
 
         foreach ($errors as $field_id => $message) {
-            $field = FieldManager::fetch($field_id);
+            $field = (new FieldManager)->select()->field($field_id)->execute()->next();
 
             // Do a little bit of a check for files so that we can correctly show
             // whether they are 'missing' or 'invalid'. If it's missing, then we
@@ -197,7 +150,7 @@ abstract class SectionEvent extends Event
      * @return string
      *  'missing' or 'invalid'
      */
-    public function __reduceType($a, $b)
+    public static function __reduceType($a, $b)
     {
         if (is_array($b)) {
             return array_reduce($b, array('SectionEvent', '__reduceType'));
@@ -315,7 +268,13 @@ abstract class SectionEvent extends Event
         }
 
         // Check to see if the Section of this Event is valid.
-        if (!$section = SectionManager::fetch($this->getSource())) {
+        $section = (new SectionManager)
+            ->select()
+            ->section($this->getSource())
+            ->execute()
+            ->next();
+
+        if (!$section) {
             $result->setAttribute('result', 'error');
             $result->appendChild(new XMLElement('message', __('The Section, %s, could not be found.', array($this->getSource())), array(
                 'message-id' => EventMessages::SECTION_MISSING
@@ -338,10 +297,9 @@ abstract class SectionEvent extends Event
         // Entry object to the delegate meaning extensions don't have to
         // do that step.
         if (isset($entry_id)) {
-            $entry = EntryManager::fetch($entry_id);
-            $entry = $entry[0];
+            $entry = (new EntryManager)->select()->entry($entry_id)->execute()->next();
 
-            if (!is_object($entry)) {
+            if (!$entry) {
                 $result->setAttribute('result', 'error');
                 $result->appendChild(new XMLElement('message', __('The Entry, %s, could not be found.', array($entry_id)), array(
                     'message-id' => EventMessages::ENTRY_MISSING
@@ -360,6 +318,7 @@ abstract class SectionEvent extends Event
         // their `checkPostFieldData` function. If the return of the function is
         // `Entry::__ENTRY_FIELD_ERROR__` then abort the event and add the error
         // messages to the `$result`.
+        $errors = null;
         if (Entry::__ENTRY_FIELD_ERROR__ == $entry->checkPostData($fields, $errors, ($entry->get('id') ? true : false))) {
             $result = self::appendErrors($result, $fields, $errors, $post_values);
             return false;
@@ -416,199 +375,6 @@ abstract class SectionEvent extends Event
         }
 
         return true;
-    }
-
-    /**
-     * Processes all extensions attached to the `EventPreSaveFilter` delegate
-     *
-     * @uses EventPreSaveFilter
-     *
-     * @param XMLElement $result
-     * @param array $fields
-     * @param XMLElement $post_values
-     * @param integer $entry_id
-     * @return boolean
-     */
-    protected function processPreSaveFilters(XMLElement $result, array &$fields, XMLElement &$post_values, $entry_id = null)
-    {
-        $can_proceed = true;
-
-        /**
-         * Prior to saving entry from the front-end. This delegate will
-         * force the Event to terminate if it populates the `$filter_results`
-         * array. All parameters are passed by reference.
-         *
-         * @delegate EventPreSaveFilter
-         * @param string $context
-         * '/frontend/'
-         * @param array $fields
-         * @param Event $this
-         * @param array $messages
-         *  An associative array of array's which contain 4 values,
-         *  the name of the filter (string), the status (boolean),
-         *  the message (string) an optionally an associative array
-         *  of additional attributes to add to the filter element.
-         * @param XMLElement $post_values
-         * @param integer $entry_id
-         *  If editing an entry, this parameter will be an integer,
-         *  otherwise null.
-         */
-        Symphony::ExtensionManager()->notifyMembers(
-            'EventPreSaveFilter',
-            '/frontend/',
-            array(
-                'fields' => &$fields,
-                'event' => &$this,
-                'messages' => &$this->filter_results,
-                'post_values' => &$post_values,
-                'entry_id' => $entry_id
-            )
-        );
-
-        // Logic taken from `event.section.php` to fail should any `$this->filter_results`
-        // be returned. This delegate can cause the event to exit early.
-        if (is_array($this->filter_results) && !empty($this->filter_results)) {
-            $can_proceed = true;
-
-            foreach ($this->filter_results as $fr) {
-                list($name, $status, $message, $attributes) = array_pad($fr, 4, null);
-
-                $result->appendChild(
-                    self::buildFilterElement($name, ($status ? 'passed' : 'failed'), $message, $attributes)
-                );
-
-                if ($status === false) {
-                    $can_proceed = false;
-                }
-            }
-
-            if ($can_proceed !== true) {
-                $result->appendChild($post_values);
-                $result->setAttribute('result', 'error');
-                $result->appendChild(new XMLElement('message', __('Entry encountered errors when saving.'), array(
-                    'message-id' => EventMessages::FILTER_FAILED
-                )));
-            }
-        }
-
-        // Reset the filter results to prevent duplicates. RE: #2179
-        $this->filter_results = array();
-        return $can_proceed;
-    }
-
-    /**
-     * Processes all extensions attached to the `EventPostSaveFilter` delegate
-     *
-     * @uses EventPostSaveFilter
-     *
-     * @param XMLElement $result
-     * @param array $fields
-     * @param Entry $entry
-     * @return XMLElement
-     */
-    protected function processPostSaveFilters(XMLElement $result, array $fields, Entry $entry = null)
-    {
-        /**
-         * After saving entry from the front-end. This delegate will not force
-         * the Events to terminate if it populates the `$filter_results` array.
-         * Provided with references to this object, the `$_POST` data and also
-         * the error array
-         *
-         * @delegate EventPostSaveFilter
-         * @param string $context
-         * '/frontend/'
-         * @param integer $entry_id
-         * @param array $fields
-         * @param Entry $entry
-         * @param Event $this
-         * @param array $messages
-         *  An associative array of array's which contain 4 values,
-         *  the name of the filter (string), the status (boolean),
-         *  the message (string) an optionally an associative array
-         *  of additional attributes to add to the filter element.
-         */
-        Symphony::ExtensionManager()->notifyMembers('EventPostSaveFilter', '/frontend/', array(
-            'entry_id' => $entry->get('id'),
-            'fields' => $fields,
-            'entry' => $entry,
-            'event' => &$this,
-            'messages' => &$this->filter_results
-        ));
-
-        if (is_array($this->filter_results) && !empty($this->filter_results)) {
-            foreach ($this->filter_results as $fr) {
-                list($name, $status, $message, $attributes) = $fr;
-
-                $result->appendChild(
-                    self::buildFilterElement($name, ($status ? 'passed' : 'failed'), $message, $attributes)
-                );
-            }
-        }
-
-        // Reset the filter results to prevent duplicates. RE: #2179
-        $this->filter_results = array();
-        return $result;
-    }
-
-    /**
-     * Processes all extensions attached to the `EventFinalSaveFilter` delegate
-     *
-     * @uses EventFinalSaveFilter
-     *
-     * @param XMLElement $result
-     * @param array $fields
-     * @param Entry $entry
-     * @return XMLElement
-     */
-    protected function processFinalSaveFilters(XMLElement $result, array $fields, Entry $entry = null)
-    {
-        /**
-         * This delegate that lets extensions know the final status of the
-         * current Event. It is triggered when everything has processed correctly.
-         * The `$messages` array contains the results of the previous filters that
-         * have executed, and the `$errors` array contains any errors that have
-         * occurred as a result of this delegate. These errors cannot stop the
-         * processing of the Event, as that has already been done.
-         *
-         *
-         * @delegate EventFinalSaveFilter
-         * @param string $context
-         * '/frontend/'
-         * @param array $fields
-         * @param Event $this
-         * @param array $messages
-         *  An associative array of array's which contain 4 values,
-         *  the name of the filter (string), the status (boolean),
-         *  the message (string) an optionally an associative array
-         *  of additional attributes to add to the filter element.
-         * @param array $errors
-         *  An associative array of array's which contain 4 values,
-         *  the name of the filter (string), the status (boolean),
-         *  the message (string) an optionally an associative array
-         *  of additional attributes to add to the filter element.
-         * @param Entry $entry
-         */
-        Symphony::ExtensionManager()->notifyMembers('EventFinalSaveFilter', '/frontend/', array(
-            'fields'    => $fields,
-            'event'     => $this,
-            'messages'  => $this->filter_results,
-            'errors'    => &$this->filter_errors,
-            'entry'     => $entry
-        ));
-
-        if (is_array($this->filter_errors) && !empty($this->filter_errors)) {
-            foreach ($this->filter_errors as $fr) {
-                list($name, $status, $message, $attributes) = $fr;
-
-                $result->appendChild(
-                    self::buildFilterElement($name, ($status ? 'passed' : 'failed'), $message, $attributes)
-                );
-            }
-        }
-
-        // Reset the filter results to prevent duplicates. RE: #2179
-        $this->filter_results = array();
-        return $result;
     }
 
     /**
@@ -671,7 +437,7 @@ abstract class SectionEvent extends Event
 
             $email = Email::create();
 
-            // Huib: Exceptions are also thrown in the settings functions, not only in the send function.
+            // Exceptions are also thrown in the settings functions, not only in the send function.
             // Those Exceptions should be caught too.
             try {
                 $email->recipients = array(
@@ -742,32 +508,4 @@ abstract class SectionEvent extends Event
 
         return $result;
     }
-}
-
-/**
- * Basic lookup class for Event messages, allows for frontend developers
- * to localise and change event messages without relying on string
- * comparision.
- *
- * @since Symphony 2.4
- */
-class EventMessages
-{
-    const UNKNOWN_ERROR = 0;
-
-    const ENTRY_CREATED_SUCCESS = 100;
-    const ENTRY_EDITED_SUCCESS = 101;
-    const ENTRY_ERRORS = 102;
-    const ENTRY_MISSING = 103;
-    const ENTRY_NOT_UNIQUE = 104;
-
-    const SECTION_MISSING = 200;
-
-    const FIELD_MISSING = 301;
-    const FIELD_INVALID = 302;
-    const FIELD_NOT_UNIQUE = 303;
-
-    const FILTER_FAILED = 400;
-
-    const SECURITY_XSRF = 500;
 }

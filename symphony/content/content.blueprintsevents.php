@@ -10,8 +10,6 @@
 
 class contentBlueprintsEvents extends ResourcesPage
 {
-    public $_errors = array();
-
     public function __viewIndex($resource_type)
     {
         parent::__viewIndex(ResourceManager::RESOURCE_TYPE_EVENT);
@@ -46,10 +44,10 @@ class contentBlueprintsEvents extends ResourcesPage
             );
 
             // These alerts are only valid if the form doesn't have errors
-        } elseif (isset($this->_context[2])) {
+        } elseif (isset($this->_context['flag'])) {
             $time = Widget::Time();
 
-            switch ($this->_context[2]) {
+            switch ($this->_context['flag']) {
                 case 'saved':
                     $message = __('Event updated at %s.', array($time->generate()));
                     break;
@@ -77,16 +75,16 @@ class contentBlueprintsEvents extends ResourcesPage
         if (isset($_POST['fields'])) {
             $fields = $_POST['fields'];
 
-            if ($this->_context[0] == 'edit') {
+            if ($this->_context['action'] === 'edit') {
                 $isEditing = true;
             }
-        } elseif ($this->_context[0] == 'edit' || $this->_context[0] == 'info') {
+        } elseif ($this->_context['action'] === 'edit' || $this->_context['action'] === 'info') {
             $isEditing = true;
-            $handle = $this->_context[1];
+            $handle = $this->_context['handle'];
             $existing = EventManager::create($handle);
             $about = General::array_map_recursive('stripslashes', $existing->about());
 
-            if ($this->_context[0] == 'edit' && !$existing->allowEditorToParse()) {
+            if ($this->_context['action'] === 'edit' && !$existing->allowEditorToParse()) {
                 redirect(SYMPHONY_URL . '/blueprints/events/info/' . $handle . '/');
             }
 
@@ -110,9 +108,10 @@ class contentBlueprintsEvents extends ResourcesPage
                 }
             }
 
-            $canonical_link = '/blueprints/events/' . $this->_context[0] . '/' . $handle . '/';
+            $canonical_link = '/blueprints/events/' . $this->_context['action'] . '/' . $handle . '/';
         }
 
+        $name = null;
         // Handle name on edited changes, or from reading an edited datasource
         if (isset($about['name'])) {
             $name = $about['name'];
@@ -121,7 +120,14 @@ class contentBlueprintsEvents extends ResourcesPage
         }
 
         $this->setPageType('form');
-        $this->setTitle(__(($isEditing ? '%1$s &ndash; %2$s &ndash; %3$s' : '%2$s &ndash; %3$s'), array($name, __('Events'), __('Symphony'))));
+        $this->setTitle(
+            __(
+                $isEditing
+                    ? '%1$s &ndash; %2$s &ndash; %3$s'
+                    : '%2$s &ndash; %3$s',
+                [$name, __('Events'), __('Symphony')]
+            )
+        );
         if ($canonical_link) {
             $this->addElementToHead(new XMLElement('link', null, array(
                 'rel' => 'canonical',
@@ -145,7 +151,7 @@ class contentBlueprintsEvents extends ResourcesPage
             $sources->appendChild($label);
             $sources->appendChild($div);
 
-            $sections = SectionManager::fetch(null, 'ASC', 'name');
+            $sections = (new SectionManager)->select()->execute()->rows();
             $options = array();
             $section_options = array();
             $source = isset($fields['source']) ? $fields['source'] : null;
@@ -230,10 +236,14 @@ class contentBlueprintsEvents extends ResourcesPage
              * @param array $options
              *  An array of all the filters that are available, passed by reference
              */
-            Symphony::ExtensionManager()->notifyMembers('AppendEventFilter', '/blueprints/events/' . $this->_context[0] . '/', array(
-                'selected' => $filters,
-                'options' => &$options
-            ));
+            Symphony::ExtensionManager()->notifyMembers(
+                'AppendEventFilter',
+                '/blueprints/events/' . $this->_context['action'] . '/',
+                [
+                    'selected' => $filters,
+                    'options' => &$options,
+                ]
+            );
 
             $fieldset->appendChild(Widget::Select('fields[filters][]', $options, array('multiple' => 'multiple', 'id' => 'event-filters')));
             $this->Form->appendChild($fieldset);
@@ -249,7 +259,7 @@ class contentBlueprintsEvents extends ResourcesPage
             $div = new XMLElement('div');
             $label = Widget::Label(__('Pages'));
 
-            $pages = PageManager::fetch();
+            $pages = (new PageManager)->select()->execute()->rows();
             $event_handle = str_replace('-', '_', Lang::createHandle($fields['name']));
             $connections = ResourceManager::getAttachedPages(ResourceManager::RESOURCE_TYPE_EVENT, $event_handle);
             $selected = array();
@@ -261,7 +271,11 @@ class contentBlueprintsEvents extends ResourcesPage
             $options = array();
 
             foreach ($pages as $page) {
-                $options[] = array($page['id'], in_array($page['id'], $selected), PageManager::resolvePageTitle($page['id']));
+                $options[] = array(
+                    $page['id'],
+                    in_array($page['id'], $selected),
+                    General::sanitize(PageManager::resolvePageTitle($page['id']))
+                );
             }
 
             $label->appendChild(Widget::Select('fields[connections][]', $options, array('multiple' => 'multiple')));
@@ -375,21 +389,59 @@ class contentBlueprintsEvents extends ResourcesPage
              * '/blueprints/events/'
              * @param string $file
              *  The path to the Event file
+             * @param string $handle
+             *  @since Symphony 3.0.0
+             *  The handle of the Event
              */
-            Symphony::ExtensionManager()->notifyMembers('EventPreDelete', '/blueprints/events/', array('file' => EVENTS . "/event." . $this->_context[1] . ".php"));
+            Symphony::ExtensionManager()->notifyMembers(
+                'EventPreDelete',
+                '/blueprints/events/',
+                [
+                    'file' => EVENTS . "/event." . $this->_context['handle'] . ".php",
+                    'handle' => $this->_context['handle'],
+                ]
+            );
 
-            if (!General::deleteFile(EVENTS . '/event.' . $this->_context[1] . '.php')) {
+            if (!General::deleteFile(EVENTS . '/event.' . $this->_context['handle'] . '.php')) {
                 $this->pageAlert(
-                    __('Failed to delete %s.', array('<code>' . $this->_context[1] . '</code>'))
+                    __('Failed to delete %s.', array('<code>' . $this->_context['handle'] . '</code>'))
                     . ' ' . __('Please check permissions on %s.', array('<code>/workspace/events</code>')),
                     Alert::ERROR
                 );
             } else {
-                $pages = ResourceManager::getAttachedPages(ResourceManager::RESOURCE_TYPE_EVENT, $this->_context[1]);
+                $pages = ResourceManager::getAttachedPages(
+                    ResourceManager::RESOURCE_TYPE_EVENT,
+                    $this->_context['handle']
+                );
 
                 foreach ($pages as $page) {
-                    ResourceManager::detach(ResourceManager::RESOURCE_TYPE_EVENT, $this->_context[1], $page['id']);
+                    ResourceManager::detach(
+                        ResourceManager::RESOURCE_TYPE_EVENT,
+                        $this->_context['handle'],
+                        $page['id']
+                    );
                 }
+
+                /**
+                 * After deleting the Event file. Target file path is provided.
+                 *
+                 * @delegate EventPostDelete
+                 * @since Symphony 3.0.0
+                 * @param string $context
+                 * '/blueprints/events/'
+                 * @param string $file
+                 *  The path to the Event file
+                 * @param string $handle
+                 *  The handle of the Event
+                 */
+                Symphony::ExtensionManager()->notifyMembers(
+                    'EventPostDelete',
+                    '/blueprints/events/',
+                    [
+                        'file' => EVENTS . "/event." . $this->_context['handle'] . ".php",
+                        'handle' => $this->_context['handle'],
+                    ]
+                );
 
                 redirect(SYMPHONY_URL . '/blueprints/events/');
             }
@@ -412,6 +464,8 @@ class contentBlueprintsEvents extends ResourcesPage
             $this->_errors['name'] = __('This is a required field');
         } elseif (strpos($fields['name'], '\\') !== false) {
             $this->_errors['name'] = __('This field contains invalid characters') . ' (\\)';
+        } elseif (!preg_match('/^\p{L}/u', $fields['name'])) {
+            $this->_errors['name'] = __('The name of the event must begin with a letter.');
         }
 
         if (trim($fields['source']) == '') {
@@ -432,7 +486,7 @@ class contentBlueprintsEvents extends ResourcesPage
             }
         }
 
-        $classname = Lang::createHandle($fields['name'], 255, '_', false, true, array('@^[^a-z\d]+@i' => '', '/[^\w-\.]/i' => ''));
+        $classname = Lang::createHandle($fields['name'], 255, '_', false, true, array('@^[^a-z\d]+@i' => '', '/[^\w\-\.]/i' => ''));
         $rootelement = str_replace('_', '-', $classname);
         $extends = 'SectionEvent';
 
@@ -445,10 +499,10 @@ class contentBlueprintsEvents extends ResourcesPage
         $isDuplicate = false;
         $queueForDeletion = null;
 
-        if ($this->_context[0] == 'new' && is_file($file)) {
+        if ($this->_context['action'] === 'new' && is_file($file)) {
             $isDuplicate = true;
-        } elseif ($this->_context[0] == 'edit') {
-            $existing_handle = $this->_context[1];
+        } elseif ($this->_context['action'] === 'edit') {
+            $existing_handle = $this->_context['handle'];
 
             if ($classname != $existing_handle && is_file($file)) {
                 $isDuplicate = true;
@@ -546,7 +600,7 @@ class contentBlueprintsEvents extends ResourcesPage
             // Remove left over placeholders
             $eventShell = preg_replace(array('/<!--[\w ]++-->/'), '', $eventShell);
 
-            if ($this->_context[0] == 'new') {
+            if ($this->_context['action'] === 'new') {
                 /**
                  * Prior to creating an Event, the file path where it will be written to
                  * is provided and well as the contents of that file.
@@ -611,20 +665,21 @@ class contentBlueprintsEvents extends ResourcesPage
                 if ($queueForDeletion) {
                     General::deleteFile($queueForDeletion);
 
-                    $pages = PageManager::fetch(false, array('events', 'id'), array("
-                        `events` REGEXP '[[:<:]]" . $existing_handle . "[[:>:]]'
-                    "));
+                    // Update pages that use this event
+                    $pages = (new PageManager)
+                        ->select(['events', 'id'])
+                        ->where(['events' => ['regexp' => '[[:<:]]' . $existing_handle . '[[:>:]]']])
+                        ->execute()
+                        ->rows();
 
-                    if (is_array($pages) && !empty($pages)) {
-                        foreach ($pages as $page) {
-                            $page['events'] = preg_replace('/\b'.$existing_handle.'\b/i', $classname, $page['events']);
+                    foreach ($pages as $page) {
+                        $page['events'] = preg_replace('/\b'.$existing_handle.'\b/i', $classname, $page['events']);
 
-                            PageManager::edit($page['id'], $page);
-                        }
+                        PageManager::edit($page['id'], $page);
                     }
                 }
 
-                if ($this->_context[0] == 'new') {
+                if ($this->_context['action'] === 'new') {
                     /**
                      * After creating the Event, the path to the Event file is provided
                      *
@@ -659,7 +714,7 @@ class contentBlueprintsEvents extends ResourcesPage
                     ));
                 }
 
-                redirect(SYMPHONY_URL . '/blueprints/events/edit/'.$classname.'/'.($this->_context[0] == 'new' ? 'created' : 'saved') . '/');
+                redirect(SYMPHONY_URL . '/blueprints/events/edit/'.$classname.'/'.($this->_context['action'] === 'new' ? 'created' : 'saved') . '/');
             }
         }
     }

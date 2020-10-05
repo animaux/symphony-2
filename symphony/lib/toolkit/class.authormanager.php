@@ -27,18 +27,18 @@ class AuthorManager
      * @param array $fields
      *  Associative array of field names => values for the Author object
      * @throws DatabaseException
-     * @return integer|boolean
-     *  Returns an Author ID of the created Author on success, false otherwise.
+     * @return integer
+     *  Returns an Author ID of the created Author on success, 0 otherwise.
      */
     public static function add(array $fields)
     {
-        if (!Symphony::Database()->insert($fields, 'tbl_authors')) {
-            return false;
-        }
+        $inserted = Symphony::Database()
+            ->insert('tbl_authors')
+            ->values($fields)
+            ->execute()
+            ->success();
 
-        $author_id = Symphony::Database()->getInsertID();
-
-        return $author_id;
+        return $inserted ? Symphony::Database()->getInsertID() : 0;
     }
 
     /**
@@ -56,10 +56,12 @@ class AuthorManager
      */
     public static function edit($id, array $fields)
     {
-        return Symphony::Database()->update($fields, 'tbl_authors', sprintf(
-            " `id` = %d",
-            $id
-        ));
+        return Symphony::Database()
+            ->update('tbl_authors')
+            ->set($fields)
+            ->where(['id' => (int)$id])
+            ->execute()
+            ->success();
     }
 
     /**
@@ -72,16 +74,68 @@ class AuthorManager
      */
     public static function delete($id)
     {
-        return Symphony::Database()->delete('tbl_authors', sprintf(
-            " `id` = %d",
-            $id
-        ));
+        return Symphony::Database()
+            ->delete('tbl_authors')
+            ->where(['id' => (int)$id])
+            ->execute()
+            ->success();
+    }
+
+    /**
+     * Fetch a single author by its reset password token
+     *
+     * @param string $token
+     * @return Author
+     * @throws Exception
+     *  If the token is not a string
+     */
+    public function fetchByPasswordResetToken($token)
+    {
+        if (!$token) {
+            return null;
+        }
+        General::ensureType([
+            'token' => ['var' => $token, 'type' => 'string'],
+        ]);
+        return $this->select()
+            ->innerJoin('tbl_forgotpass')->alias('f')
+            ->on(['a.id' => '$f.author_id'])
+            ->where(['f.expiry' => ['>' => DateTimeObj::getGMT('c')]])
+            ->where(['f.token' => $token])
+            ->limit(1)
+            ->execute()
+            ->next();
+    }
+
+    /**
+     * Fetch a single author by its auth token
+     *
+     * @param string $token
+     * @return Author
+     * @throws Exception
+     *  If the token is not a string
+     */
+    public function fetchByAuthToken($token)
+    {
+        if (!$token) {
+            return null;
+        }
+        General::ensureType([
+            'token' => ['var' => $token, 'type' => 'string'],
+        ]);
+        return $this->select()
+            ->where(['a.auth_token' => $token])
+            ->limit(1)
+            ->execute()
+            ->next();
     }
 
     /**
      * The fetch method returns all Authors from Symphony with the option to sort
      * or limit the output. This method returns an array of Author objects.
      *
+     * @deprecated @since Symphony 3.0.0
+     *  Use select() instead
      * @param string $sortby
      *  The field to sort the authors by, defaults to 'id'
      * @param string $sortdirection
@@ -101,39 +155,41 @@ class AuthorManager
      */
     public static function fetch($sortby = 'id', $sortdirection = 'ASC', $limit = null, $start = null, $where = null, $joins = null)
     {
-        $sortby = is_null($sortby) ? 'id' : Symphony::Database()->cleanValue($sortby);
-        $sortdirection = $sortdirection === 'ASC' ? 'ASC' : 'DESC';
-
-        $records = Symphony::Database()->fetch(sprintf(
-            "SELECT a.*
-            FROM `tbl_authors` AS `a`
-            %s
-            WHERE %s
-            ORDER BY %s %s
-            %s %s",
-            $joins,
-            ($where) ? $where : 1,
-            'a.'. $sortby,
-            $sortdirection,
-            ($limit) ? sprintf("LIMIT %d", $limit) : '',
-            ($start && $limit) ? ', ' . $start : ''
-        ));
-
-        if (!is_array($records) || empty($records)) {
-            return array();
+        if (Symphony::Log()) {
+            Symphony::Log()->pushDeprecateWarningToLog('AuthorManager::fetch()', 'AuthorManager::select()');
         }
 
-        $authors = array();
+        $sortby = $sortby ?: 'id';
+        $sortdirection = strtoupper($sortdirection) === 'ASC' ? 'ASC' : 'DESC';
 
-        foreach ($records as $row) {
-            $author = new Author;
+        $query = (new AuthorManager)->select();
 
-            foreach ($row as $field => $val) {
-                $author->set($field, $val);
-            }
+        $orderBy = [];
+        foreach (explode(',', $sortby) as $sortby) {
+            $sortby = trim($sortby);
+            $orderBy["a.$sortby"] = $sortdirection;
+        }
+        $query->orderBy($orderBy);
 
+        if ($joins) {
+            $joins = $query->replaceTablePrefix($joins);
+            $query->unsafeAppendSQLPart('join', $joins);
+        }
+        if ($where) {
+            $where = $query->replaceTablePrefix($where);
+            $query->unsafe()->unsafeAppendSQLPart('where', "WHERE $where");
+        }
+        if ($limit) {
+            $query->limit($limit);
+        }
+        if ($start) {
+            $query->offset($start);
+        }
+
+        $authors = $query->execute()->rows();
+
+        foreach ($authors as $author) {
             self::$_pool[$author->get('id')] = $author;
-            $authors[] = $author;
         }
 
         return $authors;
@@ -185,26 +241,14 @@ class AuthorManager
             return ($return_single ? $authors[0] : $authors);
         }
 
-        $records = Symphony::Database()->fetch(sprintf(
-            "SELECT *
-            FROM `tbl_authors`
-            WHERE `id` IN (%s)",
-            implode(",", $id)
-        ));
+        $authors = (new AuthorManager)
+            ->select()
+            ->authors($id)
+            ->execute()
+            ->rows();
 
-        if (!is_array($records) || empty($records)) {
-            return ($return_single ? $authors[0] : $authors);
-        }
-
-        foreach ($records as $row) {
-            $author = new Author;
-
-            foreach ($row as $field => $val) {
-                $author->set($field, $val);
-            }
-
+        foreach ($authors as $author) {
             self::$_pool[$author->get('id')] = $author;
-            $authors[] = $author;
         }
 
         return ($return_single ? $authors[0] : $authors);
@@ -222,22 +266,15 @@ class AuthorManager
     public static function fetchByUsername($username)
     {
         if (!isset(self::$_pool[$username])) {
-            $records = Symphony::Database()->fetchRow(0, sprintf(
-                "SELECT *
-                FROM `tbl_authors`
-                WHERE `username` = '%s'
-                LIMIT 1",
-                Symphony::Database()->cleanValue($username)
-            ));
+            $author = (new AuthorManager)
+                ->select()
+                ->username($username)
+                ->limit(1)
+                ->execute()
+                ->next();
 
-            if (!is_array($records) || empty($records)) {
+            if (!$author) {
                 return null;
-            }
-
-            $author = new Author;
-
-            foreach ($records as $field => $val) {
-                $author->set($field, $val);
             }
 
             self::$_pool[$username] = $author;
@@ -247,48 +284,26 @@ class AuthorManager
     }
 
     /**
-     * This function will allow an Author to sign into Symphony by using their
-     * authentication token as well as username/password.
+     * Creates a new Author object.
      *
-     * @param integer $author_id
-     *  The Author ID to allow to use their authentication token.
-     * @throws DatabaseException
-     * @return boolean
+     * @return Author
      */
-    public static function activateAuthToken($author_id)
+    public static function create()
     {
-        if (!is_int($author_id)) {
-            return false;
-        }
-
-        return Symphony::Database()->query(sprintf(
-            "UPDATE `tbl_authors`
-            SET `auth_token_active` = 'yes'
-            WHERE `id` = %d",
-            $author_id
-        ));
+        return new Author;
     }
 
     /**
-     * This function will remove the ability for an Author to sign into Symphony
-     * by using their authentication token
+     * Factory method that creates a new AuthorQuery.
      *
-     * @param integer $author_id
-     *  The Author ID to allow to use their authentication token.
-     * @throws DatabaseException
-     * @return boolean
+     * @since Symphony 3.0.0
+     * @param array $projection
+     *  The projection to select.
+     *  If no projection gets added, it defaults to `AuthorQuery::getDefaultProjection()`.
+     * @return AuthorQuery
      */
-    public static function deactivateAuthToken($author_id)
+    public function select(array $projection = [])
     {
-        if (!is_int($author_id)) {
-            return false;
-        }
-
-        return Symphony::Database()->query(sprintf(
-            "UPDATE `tbl_authors`
-            SET `auth_token_active` = 'no'
-            WHERE `id` = %d",
-            $author_id
-        ));
+        return new AuthorQuery(Symphony::Database(), $projection);
     }
 }

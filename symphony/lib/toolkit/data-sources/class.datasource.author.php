@@ -11,36 +11,37 @@
  */
 class AuthorDatasource extends Datasource
 {
-    public function __processAuthorFilter($field, $filter)
+    public function processAuthorFilter($field, $filter)
     {
         if (!is_array($filter)) {
-            $bits = preg_split('/,\s*/', $filter, -1, PREG_SPLIT_NO_EMPTY);
-            $bits = array_map('trim', $bits);
-        } else {
-            $bits = $filter;
+            $filter = preg_split('/,\s*/', $filter, -1, PREG_SPLIT_NO_EMPTY);
+            $filter = array_map('trim', $filter);
         }
 
-        $authors = Symphony::Database()->fetchCol('id', sprintf("
-                SELECT `id` FROM `tbl_authors`
-                WHERE `%s` IN ('%s')",
-                $field,
-                implode("', '", $bits)
-        ));
+        $authors = Symphony::Database()
+            ->select(['id'])
+            ->from('tbl_authors')
+            ->where([$field => ['in' => $filter]])
+            ->execute()
+            ->column('id');
 
-        return (is_array($authors) && !empty($authors) ? $authors : null);
+        return is_array($authors) && !empty($authors) ? $authors : null;
     }
 
     public function execute(array &$param_pool = null)
     {
-        $author_ids = array();
+        $authorsQuery = (new AuthorManager)
+            ->select()
+            ->sort((string)$this->dsParamSORT, $this->dsParamORDER);
 
         if (is_array($this->dsParamFILTERS) && !empty($this->dsParamFILTERS)) {
+            $author_ids = [];
             foreach ($this->dsParamFILTERS as $field => $value) {
                 if (!is_array($value) && trim($value) == '') {
                     continue;
                 }
 
-                $ret = $this->__processAuthorFilter($field, $value);
+                $ret = $this->processAuthorFilter($field, $value);
 
                 if (empty($ret)) {
                     $author_ids = array();
@@ -54,15 +55,16 @@ class AuthorDatasource extends Datasource
 
                 $author_ids = array_intersect($author_ids, $ret);
             }
-
-            $authors = AuthorManager::fetchByID(array_values($author_ids));
-        } else {
-            $authors = AuthorManager::fetch($this->dsParamSORT, $this->dsParamORDER);
+            if (!empty($author_ids)) {
+                $authorsQuery->authors(array_values($author_ids));
+            }
         }
 
-        if ((!is_array($authors) || empty($authors)) && $this->dsParamREDIRECTONEMPTY === 'yes') {
+        $authors = $authorsQuery->execute()->rows();
+
+        if (empty($authors) && $this->dsParamREDIRECTONEMPTY === 'yes') {
             throw new FrontendPageNotFoundException;
-        } elseif (!is_array($authors) || empty($authors)) {
+        } elseif (empty($authors)) {
             $result = $this->emptyXMLSet();
             return $result;
         } else {
@@ -146,14 +148,19 @@ class AuthorDatasource extends Datasource
                     // Author Token
                     if (in_array('author-token', $this->dsParamINCLUDEDELEMENTS) && $author->isTokenActive()) {
                         $xAuthor->appendChild(
-                            new XMLElement('author-token', $author->createAuthToken())
+                            new XMLElement('author-token', $author->getAuthToken())
                         );
                     }
 
                     // Default Area
                     if (in_array('default-area', $this->dsParamINCLUDEDELEMENTS) && !is_null($author->get('default_area'))) {
                         // Section
-                        if ($section = SectionManager::fetch($author->get('default_area'))) {
+                        $section = (new SectionManager)
+                            ->select()
+                            ->section($author->get('default_area'))
+                            ->execute()
+                            ->next();
+                        if ($section) {
                             $default_area = new XMLElement('default-area', $section->get('name'));
                             $default_area->setAttributeArray(array('id' => $section->get('id'), 'handle' => $section->get('handle'), 'type' => 'section'));
                             $xAuthor->appendChild($default_area);

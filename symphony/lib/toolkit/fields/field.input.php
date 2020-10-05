@@ -14,6 +14,7 @@ class FieldInput extends Field implements ExportableField, ImportableField
         parent::__construct();
         $this->_name = __('Text Input');
         $this->_required = true;
+        $this->entryQueryFieldAdapter = new EntryQueryInputAdapter($this);
 
         $this->set('required', 'no');
     }
@@ -53,18 +54,32 @@ class FieldInput extends Field implements ExportableField, ImportableField
 
     public function createTable()
     {
-        return Symphony::Database()->query(
-            "CREATE TABLE IF NOT EXISTS `tbl_entries_data_" . $this->get('id') . "` (
-              `id` int(11) unsigned NOT null auto_increment,
-              `entry_id` int(11) unsigned NOT null,
-              `handle` varchar(255) default null,
-              `value` varchar(255) default null,
-              PRIMARY KEY  (`id`),
-              UNIQUE KEY `entry_id` (`entry_id`),
-              KEY `handle` (`handle`),
-              KEY `value` (`value`)
-            ) ENGINE=MyISAM DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;"
-        );
+        return Symphony::Database()
+            ->create('tbl_entries_data_' . General::intval($this->get('id')))
+            ->ifNotExists()
+            ->fields([
+                'id' => [
+                    'type' => 'int(11)',
+                    'auto' => true,
+                ],
+                'entry_id' => 'int(11)',
+                'handle' => [
+                    'type' => 'varchar(255)',
+                    'null' => true,
+                ],
+                'value' => [
+                    'type' => 'varchar(255)',
+                    'null' => true,
+                ],
+            ])
+            ->keys([
+                'id' => 'primary',
+                'entry_id' => 'unique',
+                'handle' => 'key',
+                'value' => 'key',
+            ])
+            ->execute()
+            ->success();
     }
 
     /*-------------------------------------------------------------------------
@@ -178,7 +193,7 @@ class FieldInput extends Field implements ExportableField, ImportableField
         }
 
         $result = array(
-            'value' => $data
+            'value' => General::substr($data, 0, 255)
         );
 
         $result['handle'] = Lang::createHandle($result['value']);
@@ -197,11 +212,11 @@ class FieldInput extends Field implements ExportableField, ImportableField
         if ($encode === true) {
             $value = General::sanitize($value);
         } else {
-            if (!General::validateXML($data['value'], $errors, false, new XsltProcess)) {
+            if (!General::validateXML($data['value'], $errors, false, new XSLTProcess)) {
                 $value = html_entity_decode($data['value'], ENT_QUOTES, 'UTF-8');
                 $value = $this->__replaceAmpersands($value);
 
-                if (!General::validateXML($value, $errors, false, new XsltProcess)) {
+                if (!General::validateXML($value, $errors, false, new XSLTProcess)) {
                     $value = General::sanitize($data['value']);
                 }
             }
@@ -291,8 +306,18 @@ class FieldInput extends Field implements ExportableField, ImportableField
         Filtering:
     -------------------------------------------------------------------------*/
 
+    /**
+     * @deprecated @since Symphony 3.0.0
+     * @see Field::buildDSRetrievalSQL()
+     */
     public function buildDSRetrievalSQL($data, &$joins, &$where, $andOperation = false)
     {
+        if (Symphony::Log()) {
+            Symphony::Log()->pushDeprecateWarningToLog(
+                get_called_class() . '::buildDSRetrievalSQL()',
+                'EntryQueryFieldAdapter::filter()'
+            );
+        }
         $field_id = $this->get('id');
 
         if (self::isFilterRegex($data[0])) {
@@ -346,8 +371,18 @@ class FieldInput extends Field implements ExportableField, ImportableField
         Sorting:
     -------------------------------------------------------------------------*/
 
+    /**
+     * @deprecated @since Symphony 3.0.0
+     * @see Field::buildSortingSQL()
+     */
     public function buildSortingSQL(&$joins, &$where, &$sort, $order = 'ASC')
     {
+        if (Symphony::Log()) {
+            Symphony::Log()->pushDeprecateWarningToLog(
+                get_called_class() . '::buildSortingSQL()',
+                'EntryQueryFieldAdapter::sort()'
+            );
+        }
         if ($this->isRandomOrder($order)) {
             $sort = 'ORDER BY RAND()';
         } else {
@@ -356,16 +391,27 @@ class FieldInput extends Field implements ExportableField, ImportableField
                     SELECT %s
                     FROM tbl_entries_data_%d AS `ed`
                     WHERE entry_id = e.id
-                ) %s',
+                ) %s, `e`.`id` %s',
                 '`ed`.value',
                 $this->get('id'),
+                $order,
                 $order
             );
         }
     }
 
+    /**
+     * @deprecated @since Symphony 3.0.0
+     * @see Field::buildSortingSelectSQL()
+     */
     public function buildSortingSelectSQL($sort, $order = 'ASC')
     {
+        if (Symphony::Log()) {
+            Symphony::Log()->pushDeprecateWarningToLog(
+                get_called_class() . '::buildSortingSelectSQL()',
+                'EntryQueryFieldAdapter::sort()'
+            );
+        }
         return null;
     }
 

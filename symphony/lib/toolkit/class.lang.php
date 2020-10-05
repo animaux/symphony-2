@@ -277,10 +277,16 @@ class Lang
         } else {
             self::$_lang = 'en';
 
+            // Clear previously loaded dictionary
+            self::$_dictionary = array();
+
             // Log error, if possible
-            if ($code !== 'en' && class_exists('Symphony', false) && Symphony::Log() instanceof Log) {
+            if ($code !== 'en' && Symphony::Log() instanceof Log) {
                 Symphony::Log()->pushToLog(
-                    __('The selected language, %s, could not be found. Using default English dictionary instead.', array($code)),
+                    __(
+                        'The selected language, %s, could not be found. Using default English dictionary instead.',
+                        [$code]
+                    ),
                     E_ERROR,
                     true
                 );
@@ -307,7 +313,7 @@ class Lang
         $enabled_extensions = array();
 
         // Fetch list of active extensions
-        if (class_exists('Symphony', false) && (!is_null(Symphony::ExtensionManager()))) {
+        if (Symphony::ExtensionManager()) {
             $enabled_extensions = Symphony::ExtensionManager()->listInstalledHandles();
         }
 
@@ -365,7 +371,7 @@ class Lang
      */
     public static function translate($string, array $inserts = null, $namespace = null)
     {
-        if (is_null($namespace) && class_exists('Symphony', false)) {
+        if (!$namespace) {
             $namespace = Symphony::getPageNamespace();
         }
 
@@ -459,7 +465,7 @@ class Lang
 
             // Translate names to English
             foreach (self::$_datetime_dictionary as $values) {
-                $string = preg_replace('/\b' . self::translate($values) . '\b/i' . (self::isUnicodeCompiled() === true ? 'u' : null), $values, $string);
+                $string = preg_replace('/\b' . self::translate($values) . '\b/iu', $values, $string);
             }
 
             // Replace custom date and time separator with space:
@@ -548,18 +554,5 @@ class Lang
             array_values(self::$_transliterations['regexp']),
             $string
         );
-    }
-
-    /**
-     * Returns boolean if PHP has been compiled with unicode support. This is
-     * useful to determine if unicode modifier's can be used in regular expression's
-     *
-     * @link http://stackoverflow.com/questions/4509576/detect-if-pcre-was-built-without-the-enable-unicode-properties-or-enable-utf8
-     * @since Symphony 2.2.2
-     * @return boolean
-     */
-    public static function isUnicodeCompiled()
-    {
-        return (@preg_match('/\pL/u', 'a') == 1 ? true : false);
     }
 }

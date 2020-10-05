@@ -3,58 +3,6 @@
 /**
  * @package toolkit
  */
-
-/**
- * The `JSONException` class extends the base `Exception` class. It's only
- * difference is that it will translate the `$code` to a human readable
- * error.
- *
- * @since Symphony 2.3
- */
-class JSONException extends Exception
-{
-    /**
-     * Constructor takes a `$message`, `$code` and the original Exception, `$ex`.
-     * Upon translating the `$code` into a more human readable message, it will
-     * initialise the base `Exception` class. If the `$code` is unfamiliar, the original
-     * `$message` will be passed.
-     *
-     * @param string $message
-     * @param integer $code
-     * @param Exception $ex
-     */
-    public function __construct($message, $code = -1, Exception $ex = null)
-    {
-        switch ($code) {
-            case JSON_ERROR_NONE:
-                $message = __('No errors.');
-                break;
-            case JSON_ERROR_DEPTH:
-                $message = __('Maximum stack depth exceeded.');
-                break;
-            case JSON_ERROR_STATE_MISMATCH:
-                $message = __('Underflow or the modes mismatch.');
-                break;
-            case JSON_ERROR_CTRL_CHAR:
-                $message = __('Unexpected control character found.');
-                break;
-            case JSON_ERROR_SYNTAX:
-                $message = __('Syntax error, malformed JSON.');
-                break;
-            case JSON_ERROR_UTF8:
-                $message = __('Malformed UTF-8 characters, possibly incorrectly encoded.');
-                break;
-            default:
-                if (!$message) {
-                    $message = __('Unknown JSON error');
-                }
-                break;
-        }
-
-        parent::__construct($message, $code, $ex);
-    }
-}
-
 /**
  * The `JSON` class takes a JSON formatted string and converts it to XML.
  * The majority of this class was originally written by Brent Burgoyne, thank you.
@@ -83,7 +31,7 @@ class JSON
      */
     public static function convertToXML($json, $standalone = true)
     {
-        self::$dom = new DomDocument('1.0', 'utf-8');
+        self::$dom = new DOMDocument('1.0', 'utf-8');
         self::$dom->formatOutput = true;
 
         // remove callback functions from JSONP
@@ -149,37 +97,32 @@ class JSON
     }
 
     /**
-     * This function takes a string and returns an empty DOMElement
-     * with a valid name. If the passed `$name` is a valid QName, the handle of
-     * this name will be the name of the element, otherwise this will fallback to 'key'.
+     * This function takes a string and returns an empty DOMElement with a valid
+     * name. If the passed `$name` is a valid QName, the handle of this name will
+     * be the name of the element, otherwise this will fallback to 'key'.
      *
      * @see toolkit.Lang#createHandle
      * @param string $name
      *  If the `$name` is not a valid QName it will be ignored and replaced with
-     *  'key'. If this happens, a `@value` attribute will be set with the original
-     *  `$name`. If `$name` is a valid QName, it will be run through `Lang::createHandle`
-     *  to create a handle for the element.
+     *  `key`. If this happens, the `$name` will be run through `Lang::createHandle`
+     *  to create a `@handle` attribute. Additionally, a `@value` attribute will be
+     *  set with the sanitized original `$name`.
+     *  If `$name` is a valid QName, it will be run through `Lang::createHandle`
+     *  to create the element name. No attributes will be added to the element.
      * @return DOMElement
-     *  An empty DOMElement with `@handle` and `@value` attributes.
+     *  An empty DOMElement, possibly with `@handle` and `@value` attributes.
      */
     private static function _valid_element_name($name)
     {
-        if (Lang::isUnicodeCompiled()) {
-            $valid_name = preg_match('/^[\p{L}]([0-9\p{L}\.\-\_]+)?$/u', $name);
-        } else {
-            $valid_name = preg_match('/^[A-z]([\w\d-_\.]+)?$/i', $name);
-        }
+        $valid_name = preg_match('/^[\p{L}]([0-9\p{L}\.\-\_]+)?$/u', $name);
 
         if ($valid_name) {
-            $xKey = self::$dom->createElement(
-                Lang::createHandle($name)
-            );
+            $xKey = self::$dom->createElement(Lang::createHandle($name));
         } else {
             $xKey = self::$dom->createElement('key');
+            $xKey->setAttribute('handle', Lang::createHandle($name));
+            $xKey->setAttribute('value', General::sanitize($name));
         }
-
-        $xKey->setAttribute('handle', Lang::createHandle($name));
-        $xKey->setAttribute('value', General::sanitize($name));
 
         return $xKey;
     }

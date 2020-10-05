@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<phpunit
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    bootstrap="boot.php"
+    defaultTestSuite="unit"
+    verbose="true"
+    colors="true">
+    <testsuites>
+        <testsuite name="unit">
+            <directory suffix="Test.php">lib</directory>
+            <directory suffix="Test.php">../extensions/*/tests/unit</directory>
+        </testsuite>
+        <testsuite name="integration">
+            <directory suffix="Test.php">int</directory>
+            <directory suffix="Test.php">../extensions/*/tests/int</directory>
+        </testsuite>
+    </testsuites>
+    <filter>
+        <whitelist
+            addUncoveredFilesFromWhitelist="false"
+            processUncoveredFilesFromWhitelist="false">
+            <directory suffix=".php">../symphony</directory>
+        </whitelist>
+    </filter>
+    <php>
+        <const name="SYMPHONYCMS_TESTSUITE" value="true"/>
+    </php>
+</phpunit>

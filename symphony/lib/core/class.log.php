@@ -50,11 +50,25 @@ class Log
     private $_archive = false;
 
     /**
-     * The date format that this Log entries will be written as. Defaults to
-     * Y/m/d H:i:s.
+     * The filter applied to logs before they are written.
+     * @since Symphony 2.7.1
+     * @var integer
+     */
+    private $_filter = -1;
+
+    /**
+     * The date format that this Log entries will be written as.
+     * @since Symphony 3.0.0, it defaults to ISO 8601.
      * @var string
      */
-    private $_datetime_format = 'Y/m/d H:i:s';
+    private $_datetime_format = 'c';
+
+    /**
+     * A random value used to identify which Log instance created the data.
+     * @since Symphony 3.0.0
+     * @var string
+     */
+    private $id;
 
     /**
      * The log constructor takes a path to the folder where the Log should be
@@ -66,6 +80,7 @@ class Log
     public function __construct($path)
     {
         $this->setLogPath($path);
+        $this->id = substr(uniqid(), 0, 6);
     }
 
     /**
@@ -100,6 +115,16 @@ class Log
     }
 
     /**
+     * Accessor for the `$id` variable.
+     * @since Symphony 3.0.0
+     * @return string
+     */
+    public function getId()
+    {
+        return $this->id;
+    }
+
+    /**
      * Setter for the `$_archive`.
      *
      * @param boolean $archive
@@ -119,7 +144,19 @@ class Log
      */
     public function setMaxSize($size)
     {
-        $this->_max_size = $size;
+        $this->_max_size = General::intval($size);
+    }
+
+    /**
+     * Setter for the `$_filter`.
+     *
+     * @since Symphony 2.7.1
+     * @param mixed $filter
+     *  The filter used on log $type parameter.
+     */
+    public function setFilter($filter)
+    {
+        $this->_filter = General::intval($filter);
     }
 
     /**
@@ -140,10 +177,10 @@ class Log
 
     /**
      * Given a PHP error constant, return a human readable name. Uses the
-     * `GenericErrorHandler::$errorTypeStrings` array to return
+     * `ErrorHandler::$errorTypeStrings` array to return
      * the name
      *
-     * @see core.GenericErrorHandler::$errorTypeStrings
+     * @see core.ErrorHandler::$errorTypeStrings
      * @param integer $type
      *  A PHP error constant
      * @return string
@@ -152,11 +189,11 @@ class Log
      */
     private function __defineNameString($type)
     {
-        if (isset(GenericErrorHandler::$errorTypeStrings[$type])) {
-            return GenericErrorHandler::$errorTypeStrings[$type];
+        if (isset(ErrorHandler::$errorTypeStrings[$type])) {
+            return ErrorHandler::$errorTypeStrings[$type];
         }
 
-        return 'UNKNOWN';
+        return is_string($type) ? $type : 'UNKNOWN';
     }
 
     /**
@@ -185,7 +222,8 @@ class Log
      * @param string $message
      *  The message to add to the Log
      * @param integer $type
-     *  A PHP error constant for this message, defaults to E_NOTICE
+     *  A PHP error constant for this message, defaults to E_NOTICE.
+     *  If null or 0, will be converted to E_ERROR.
      * @param boolean $writeToLog
      *  If set to true, this message will be immediately written to the log. By default
      *  this is set to false, which means that it will only be added to the array ready
@@ -202,14 +240,25 @@ class Log
      */
     public function pushToLog($message, $type = E_NOTICE, $writeToLog = false, $addbreak = true, $append = false)
     {
+        if (!$type) {
+            $type = E_ERROR;
+        }
+
         if ($append) {
             $this->_log[count($this->_log) - 1]['message'] =  $this->_log[count($this->_log) - 1]['message'] . $message;
         } else {
             array_push($this->_log, array('type' => $type, 'time' => time(), 'message' => $message));
-            $message = DateTimeObj::get($this->_datetime_format) . ' > ' . $this->__defineNameString($type) . ': ' . $message;
+            $message = DateTimeObj::get($this->_datetime_format) .
+                ' ' . $this->id .
+                ' > ' . $this->__defineNameString($type) .
+                ': ' . $message;
         }
 
-        if ($writeToLog) {
+        if (!is_numeric($type)) {
+            $type = E_ERROR;
+        }
+
+        if ($writeToLog && ($this->_filter === -1 || ($this->_filter & $type))) {
             return $this->writeToLog($message, $addbreak);
         }
     }
@@ -233,7 +282,7 @@ class Log
             return false;
         }
 
-        $permissions = class_exists('Symphony', false) ? Symphony::Configuration()->get('write_mode', 'file') : '0664';
+        $permissions = Symphony::Configuration() ? Symphony::Configuration()->get('write_mode', 'file') : '0664';
 
         return General::writeFile($this->_log_path, $message . ($addbreak ? PHP_EOL : ''), $permissions, 'a+');
     }
@@ -392,15 +441,13 @@ class Log
         }
 
         if ($flag == self::OVERWRITE) {
-            if (file_exists($this->_log_path) && is_writable($this->_log_path)) {
-                General::deleteFile($this->_log_path);
-            }
+            General::deleteFile($this->_log_path);
 
             $this->writeToLog('============================================', true);
             $this->writeToLog('Log Created: ' . DateTimeObj::get('c'), true);
             $this->writeToLog('============================================', true);
 
-            @chmod($this->_log_path, intval($mode, 8));
+            chmod($this->_log_path, intval($mode, 8));
 
             return 1;
         }

@@ -13,17 +13,48 @@
 class contentSystemAuthors extends AdministrationPage
 {
     public $_Author;
-    public $_errors = array();
+
+    /**
+     * The Authors page has /action/id/flag/ context.
+     * eg. /edit/1/saved/
+     *
+     * @param array $context
+     * @param array $parts
+     * @return array
+     */
+    public function parseContext(array &$context, array $parts)
+    {
+        // Order is important!
+        $params = array_fill_keys(array('action', 'id', 'flag'), null);
+
+        if (isset($parts[2])) {
+            $extras = preg_split('/\//', $parts[2], -1, PREG_SPLIT_NO_EMPTY);
+            list($params['action'], $params['id'], $params['flag']) = array_replace([null,null,null], $extras);
+            $params['id'] = (int)$params['id'];
+        }
+
+        $context = array_filter($params);
+    }
 
     public function sort(&$sort, &$order, $params)
     {
+        $authorQuery = (new AuthorManager)->select();
         if (is_null($sort) || $sort == 'name') {
-            return AuthorManager::fetch("first_name $order,  last_name", $order);
+            $authorQuery
+                ->sort('first_name', $order)
+                ->sort('last_name', $order);
         } else {
-            $sort = General::sanitize($sort);
+            $authorQuery->sort((string)$sort, $order);
         }
 
-        return AuthorManager::fetch($sort, $order);
+        return $authorQuery->execute()->rows();
+    }
+
+    public function isRemoteLoginActionChecked()
+    {
+        return is_array($_POST['action']) &&
+            array_key_exists('remote_login', $_POST['action']) &&
+            $_POST['action']['remote_login'] === 'yes';
     }
 
     public function __viewIndex()
@@ -82,9 +113,17 @@ class contentSystemAuthors extends AdministrationPage
          * '/system/authors/'
          * @param array $columns
          * An array of the current columns, passed by reference
+         * @param string $sort
+         *  @since Symphony 3.0.0
+         *  The sort field
+         * @param string $order
+         *  @since Symphony 3.0.0
+         *  The sort order
          */
         Symphony::ExtensionManager()->notifyMembers('AddCustomAuthorColumn', '/system/authors/', array(
             'columns' => &$columns,
+            'sort' => $sort,
+            'order' => $order,
         ));
 
         $aTableHead = Sortable::buildTableHeaders($columns, $sort, $order, (isset($_REQUEST['filter']) ? '&amp;filter=' . $_REQUEST['filter'] : ''));
@@ -99,7 +138,7 @@ class contentSystemAuthors extends AdministrationPage
             foreach ($authors as $a) {
                 // Setup each cell
                 if (
-                    (Symphony::Author()->isDeveloper() || (Symphony::Author()->isManager() && !$a->isDeveloper()))
+                    (Symphony::Author()->isDeveloper() || (Symphony::Author()->isManager() && !$a->isDeveloper() && !$a->isManager()))
                     || Symphony::Author()->get('id') == $a->get('id')
                 ) {
                     $td1 = Widget::TableData(
@@ -210,11 +249,11 @@ class contentSystemAuthors extends AdministrationPage
     public function __form()
     {
         // Handle unknown context
-        if (!in_array($this->_context[0], array('new', 'edit'))) {
+        if (!in_array($this->_context['action'], array('new', 'edit'))) {
             Administration::instance()->errorPageNotFound();
         }
 
-        if ($this->_context[0] == 'new' && !Symphony::Author()->isDeveloper() && !Symphony::Author()->isManager()) {
+        if ($this->_context['action'] === 'new' && !Symphony::Author()->isDeveloper() && !Symphony::Author()->isManager()) {
             Administration::instance()->throwCustomError(
                 __('You are not authorised to access this page.'),
                 __('Access Denied'),
@@ -222,10 +261,10 @@ class contentSystemAuthors extends AdministrationPage
             );
         }
 
-        if (isset($this->_context[2])) {
+        if (isset($this->_context['flag'])) {
             $time = Widget::Time();
 
-            switch ($this->_context[2]) {
+            switch ($this->_context['flag']) {
                 case 'saved':
                     $message = __('Author updated at %s.', array($time->generate()));
                     break;
@@ -246,13 +285,13 @@ class contentSystemAuthors extends AdministrationPage
 
         $this->setPageType('form');
         $isOwner = false;
-        $isEditing = ($this->_context[0] == 'edit');
+        $isEditing = ($this->_context['action'] === 'edit');
         $canonical_link = null;
 
         if (isset($_POST['fields'])) {
             $author = $this->_Author;
-        } elseif ($this->_context[0] == 'edit') {
-            if (!$author_id = (int)$this->_context[1]) {
+        } elseif ($isEditing) {
+            if (!$author_id = $this->_context['id']) {
                 redirect(SYMPHONY_URL . '/system/authors/');
             }
 
@@ -280,14 +319,21 @@ class contentSystemAuthors extends AdministrationPage
             );
         }
 
-        $this->setTitle(__(($this->_context[0] == 'new' ? '%2$s &ndash; %3$s' : '%1$s &ndash; %2$s &ndash; %3$s'), array($author->getFullName(), __('Authors'), __('Symphony'))));
+        $this->setTitle(
+            __(
+                $this->_context['action'] === 'new'
+                    ? '%2$s &ndash; %3$s'
+                    : '%1$s &ndash; %2$s &ndash; %3$s',
+                [$author->getFullName(), __('Authors'), __('Symphony')]
+            )
+        );
         if ($canonical_link) {
             $this->addElementToHead(new XMLElement('link', null, array(
                 'rel' => 'canonical',
                 'href' => SYMPHONY_URL . $canonical_link,
             )));
         }
-        $this->appendSubheading(($this->_context[0] == 'new' ? __('Untitled') : $author->getFullName()));
+        $this->appendSubheading(($this->_context['action'] === 'new' ? __('Untitled') : $author->getFullName()));
         $this->insertBreadcrumbs(array(
             Widget::Anchor(__('Authors'), SYMPHONY_URL . '/system/authors/'),
         ));
@@ -340,15 +386,22 @@ class contentSystemAuthors extends AdministrationPage
 
             $options = array(
                 array('author', false, __('Author')),
-                array('manager', $author->isManager(), __('Manager'))
             );
+
+            if (Symphony::Author()->isDeveloper() || ($isOwner && $author->isManager())) {
+                $options[] = array('manager', $author->isManager(), __('Manager'));
+            }
 
             if (Symphony::Author()->isDeveloper()) {
                 $options[] = array('developer', $author->isDeveloper(), __('Developer'));
             }
 
             $label->appendChild(Widget::Select('fields[user_type]', $options));
-            $div->appendChild($label);
+            if (isset($this->_errors['user_type'])) {
+                $div->appendChild(Widget::Error($label, $this->_errors['user_type']));
+            } else {
+                $div->appendChild($label);
+            }
         }
 
         $group->appendChild($div);
@@ -367,16 +420,17 @@ class contentSystemAuthors extends AdministrationPage
             - Managers can edit all Authors, and their own.
             - Authors can edit their own.
         */
-        if ($isEditing && !(
-            // All accounts can edit their own
-            $isOwner
-            // Managers can edit all Authors, and their own.
-            || (Symphony::Author()->isManager() && $author->isAuthor())
+
+        $canEdit = // Managers can edit all Authors, and their own.
+                (Symphony::Author()->isManager() && $author->isAuthor())
             // Primary account can edit all accounts.
             || Symphony::Author()->isPrimaryAccount()
             // Developers can edit all developers, managers and authors, and their own.
-            || Symphony::Author()->isDeveloper() && $author->isPrimaryAccount() === false
-        )) {
+            || Symphony::Author()->isDeveloper() && $author->isPrimaryAccount() === false;
+
+        // At this point, only developers, managers and owner are authorized
+        // Make sure all users except developers needs to input the old password
+        if ($isEditing && ($canEdit || $isOwner) && !Symphony::Author()->isDeveloper()) {
             $fieldset->setAttribute('class', 'three columns');
 
             $label = Widget::Label(null, null, 'column');
@@ -398,23 +452,30 @@ class contentSystemAuthors extends AdministrationPage
         $group->appendChild($fieldset);
 
         // Auth token
-        if (Symphony::Author()->isDeveloper() || Symphony::Author()->isManager()) {
+        if (Symphony::Author()->isDeveloper() || Symphony::Author()->isManager() || $isOwner) {
             $label = Widget::Label();
-            $group->appendChild(Widget::Input('fields[auth_token_active]', 'no', 'hidden'));
-            $input = Widget::Input('fields[auth_token_active]', 'yes', 'checkbox');
+            $group->appendChild(Widget::Input('action[remote_login]', 'no', 'hidden'));
+            $input = Widget::Input('action[remote_login]', 'yes', 'checkbox');
 
             if ($author->isTokenActive()) {
                 $input->setAttribute('checked', 'checked');
+                $tokenUrl = SYMPHONY_URL . '/login/' . $author->getAuthToken() . '/';
+                $label->setValue(__('%s Remote login with the token %s is enabled.', [
+                     $input->generate(),
+                     '<a href="' . $tokenUrl . '">' . $author->getAuthToken() . '</a>',
+                ]));
+            } else {
+                $label->setValue(__('%s Remote login is currently disabled.', [
+                    $input->generate(),
+                ]) . ' ' . __('Check the box to generate a new token.'));
             }
 
-            $temp = SYMPHONY_URL . '/login/' . $author->createAuthToken() . '/';
-            $label->setValue(__('%s Allow remote login via', array($input->generate())) . ' <a href="' . $temp . '">' . $temp . '</a>');
             $group->appendChild($label);
         }
 
         $label = Widget::Label(__('Default Area'));
 
-        $sections = SectionManager::fetch(null, 'ASC', 'sortorder');
+        $sections = (new SectionManager)->select()->sort('sortorder')->execute()->rows();
 
         $options = array();
 
@@ -503,7 +564,7 @@ class contentSystemAuthors extends AdministrationPage
             $group->setAttribute('class', 'settings');
             $group->setAttribute('id', 'confirmation');
             $group->appendChild(new XMLElement('legend', __('Confirmation')));
-            $group->appendChild(new XMLELement('p', __('Please confirm changes to this author with your password.'), array('class' => 'help')));
+            $group->appendChild(new XMLElement('p', __('Please confirm changes to this author with your password.'), array('class' => 'help')));
 
             $label = Widget::Label(__('Password'));
             $label->appendChild(Widget::Input('fields[confirm-change-password]', null, 'password', array(
@@ -521,9 +582,9 @@ class contentSystemAuthors extends AdministrationPage
         $div = new XMLElement('div');
         $div->setAttribute('class', 'actions');
 
-        $div->appendChild(Widget::Input('action[save]', ($this->_context[0] == 'edit' ? __('Save Changes') : __('Create Author')), 'submit', array('accesskey' => 's')));
+        $div->appendChild(Widget::Input('action[save]', ($this->_context['action'] == 'edit' ? __('Save Changes') : __('Create Author')), 'submit', array('accesskey' => 's')));
 
-        if ($isEditing && !$isOwner && !$author->isPrimaryAccount()) {
+        if ($isEditing && !$isOwner && !$author->isPrimaryAccount() && $canEdit) {
             $button = new XMLElement('button', __('Delete'));
             $button->setAttributeArray(array('name' => 'action[delete]', 'class' => 'button confirm delete', 'title' => __('Delete this author'), 'type' => 'submit', 'accesskey' => 'd', 'data-message' => __('Are you sure you want to delete this author?')));
             $div->appendChild($button);
@@ -556,15 +617,24 @@ class contentSystemAuthors extends AdministrationPage
         Symphony::ExtensionManager()->notifyMembers('AddElementstoAuthorForm', '/system/authors/', array(
             'form' => &$this->Form,
             'author' => $author,
-            'fields' => $_POST['fields'],
+            'fields' => isset($_POST['fields']) ? $_POST['fields'] : null,
             'errors' => $this->_errors,
         ));
     }
 
     public function __actionNew()
     {
-        if (@array_key_exists('save', $_POST['action']) || @array_key_exists('done', $_POST['action'])) {
+        if (is_array($_POST['action']) && array_key_exists('save', $_POST['action'])) {
             $fields = $_POST['fields'];
+            $canCreate = Symphony::Author()->isDeveloper() || Symphony::Author()->isManager();
+
+            if (!$canCreate) {
+                Administration::instance()->throwCustomError(
+                    __('You are not authorised to create authors.'),
+                    __('Access Denied'),
+                    Page::HTTP_STATUS_UNAUTHORIZED
+                );
+            }
 
             $this->_Author = new Author();
             $this->_Author->set('user_type', $fields['user_type']);
@@ -574,9 +644,13 @@ class contentSystemAuthors extends AdministrationPage
             $this->_Author->set('first_name', General::sanitize($fields['first_name']));
             $this->_Author->set('last_name', General::sanitize($fields['last_name']));
             $this->_Author->set('last_seen', null);
-            $this->_Author->set('password', (trim($fields['password']) == '' ? '' : Cryptography::hash(Symphony::Database()->cleanValue($fields['password']))));
+            $this->_Author->set('password', (trim($fields['password']) == '' ? '' : Cryptography::hash($fields['password'])));
             $this->_Author->set('default_area', $fields['default_area']);
-            $this->_Author->set('auth_token_active', ($fields['auth_token_active'] ? $fields['auth_token_active'] : 'no'));
+            if ($this->isRemoteLoginActionChecked() && !$this->_Author->isTokenActive()) {
+                $this->_Author->set('auth_token', Cryptography::randomBytes());
+            } elseif (!$this->isRemoteLoginActionChecked()) {
+                $this->_Author->set('auth_token', null);
+            }
             $this->_Author->set('language', isset($fields['language']) ? $fields['language'] : null);
 
             /**
@@ -597,9 +671,15 @@ class contentSystemAuthors extends AdministrationPage
              */
             Symphony::ExtensionManager()->notifyMembers('AuthorPreCreate', '/system/authors/', array(
                 'author' => $this->_Author,
-                'field' => $fields,
+                'field' => $fields, // @deprecated
+                'fields' => $fields,
                 'errors' => &$this->_errors,
             ));
+
+            // Make sure managers only create authors
+            if (Symphony::Author()->isManager() && $this->_Author->get('user_type') !== 'author') {
+                $this->_errors['user_type'] = __('The user type is invalid. You can only create Authors.');
+            }
 
             if (empty($this->_errors) && $this->_Author->validate($this->_errors)) {
                 if ($fields['password'] != $fields['password-confirmation']) {
@@ -615,6 +695,8 @@ class contentSystemAuthors extends AdministrationPage
                      * '/system/authors/'
                      * @param Author $author
                      *  The Author object that has just been created
+                     * @param integer $author_id
+                     *  The ID of Author ID that was just created
                      * @param array $fields
                      *  The POST fields
                      *  This parameter is available @since Symphony 2.7.0
@@ -625,7 +707,9 @@ class contentSystemAuthors extends AdministrationPage
                      */
                     Symphony::ExtensionManager()->notifyMembers('AuthorPostCreate', '/system/authors/', array(
                         'author' => $this->_Author,
-                        'field' => $fields,
+                        'author_id' => $author_id,
+                        'field' => $fields, // @deprecated
+                        'fields' => $fields,
                         'errors' => &$this->_errors,
                     ));
 
@@ -651,13 +735,14 @@ class contentSystemAuthors extends AdministrationPage
 
     public function __actionEdit()
     {
-        if (!$author_id = (int)$this->_context[1]) {
+        if (!$author_id = $this->_context['id']) {
             redirect(SYMPHONY_URL . '/system/authors/');
         }
 
         $isOwner = ($author_id == Symphony::Author()->get('id'));
         $fields = $_POST['fields'];
         $this->_Author = AuthorManager::fetchByID($author_id);
+        $oldData = $this->_Author->get();
 
         $canEdit = // Managers can edit all Authors, and their own.
                 (Symphony::Author()->isManager() && $this->_Author->isAuthor())
@@ -667,15 +752,23 @@ class contentSystemAuthors extends AdministrationPage
                 // but not the primary account
                 || (Symphony::Author()->isDeveloper() && $this->_Author->isPrimaryAccount() === false);
 
-        if (@array_key_exists('save', $_POST['action']) || @array_key_exists('done', $_POST['action'])) {
-            $authenticated = false;
+        if (!$isOwner && !$canEdit) {
+            Administration::instance()->throwCustomError(
+                __('You are not authorised to modify this author.'),
+                __('Access Denied'),
+                Page::HTTP_STATUS_UNAUTHORIZED
+            );
+        }
+
+        if (is_array($_POST['action']) && array_key_exists('save', $_POST['action'])) {
+            $authenticated = $changing_password = $changing_email = false;
 
             if ($fields['email'] != $this->_Author->get('email')) {
                 $changing_email = true;
             }
 
             // Check the old password was correct
-            if (isset($fields['old-password']) && strlen(trim($fields['old-password'])) > 0 && Cryptography::compare(Symphony::Database()->cleanValue(trim($fields['old-password'])), $this->_Author->get('password'))) {
+            if (isset($fields['old-password']) && strlen(trim($fields['old-password'])) > 0 && Cryptography::compare(trim($fields['old-password']), $this->_Author->get('password'))) {
                 $authenticated = true;
 
                 // Developers don't need to specify the old password, unless it's their own account
@@ -688,22 +781,25 @@ class contentSystemAuthors extends AdministrationPage
                 $authenticated = true;
             }
 
-            $this->_Author->set('id', $author_id);
-
-            if ($this->_Author->isPrimaryAccount() || ($isOwner && Symphony::Author()->isDeveloper())) {
-                $this->_Author->set('user_type', 'developer'); // Primary accounts are always developer, Developers can't lower their level
-            } elseif ((Symphony::Author()->isDeveloper() || Symphony::Author()->isManager()) && isset($fields['user_type'])) {
-                $this->_Author->set('user_type', $fields['user_type']); // Only developer can change user type
+            if (!empty($fields['user_type'])) {
+                $this->_Author->set('user_type', $fields['user_type']);
             }
-
-            $this->_Author->set('email', $fields['email']);
-            $this->_Author->set('username', General::sanitize($fields['username']));
-            $this->_Author->set('first_name', General::sanitize($fields['first_name']));
-            $this->_Author->set('last_name', General::sanitize($fields['last_name']));
+            if (!empty($fields['email'])) {
+                $this->_Author->set('email', $fields['email']);
+            }
+            if (!empty($fields['username'])) {
+                $this->_Author->set('username', General::sanitize($fields['username']));
+            }
+            if (!empty($fields['first_name'])) {
+                $this->_Author->set('first_name', General::sanitize($fields['first_name']));
+            }
+            if (!empty($fields['last_name'])) {
+                $this->_Author->set('last_name', General::sanitize($fields['last_name']));
+            }
             $this->_Author->set('language', isset($fields['language']) ? $fields['language'] : null);
 
-            if (trim($fields['password']) != '') {
-                $this->_Author->set('password', Cryptography::hash(Symphony::Database()->cleanValue($fields['password'])));
+            if (!empty($fields['password']) && trim($fields['password']) != '') {
+                $this->_Author->set('password', Cryptography::hash($fields['password']));
                 $changing_password = true;
             }
 
@@ -719,7 +815,11 @@ class contentSystemAuthors extends AdministrationPage
                 $this->_Author->set('default_area', $fields['default_area']);
             }
 
-            $this->_Author->set('auth_token_active', ($fields['auth_token_active'] ? $fields['auth_token_active'] : 'no'));
+            if ($authenticated && $this->isRemoteLoginActionChecked() && !$this->_Author->isTokenActive()) {
+                $this->_Author->set('auth_token', Cryptography::randomBytes());
+            } elseif (!$this->isRemoteLoginActionChecked()) {
+                $this->_Author->set('auth_token', null);
+            }
 
             /**
              * Before editing an author, provided with the Author object
@@ -732,20 +832,53 @@ class contentSystemAuthors extends AdministrationPage
              * An Author object not yet committed, nor validated
              * @param array $fields
              *  The POST fields
+             * @param array $data
+             *  @since Symphony 3.0.0
+             *  The values as they are in the database
              * @param array $errors
              *  The error array used to validate the Author, passed by reference.
              *  Extension should append to this array if they detect validation problems.
+             * @param bool $changing_email
+             *  @since Symphony 3.0.0
+             *  The changing email flag, so extension can act only if the email changes.
+             * @param bool $changing_password
+             *  @since Symphony 3.0.0
+             *  The changing password flag, so extension can act only if the password changes.
              */
             Symphony::ExtensionManager()->notifyMembers('AuthorPreEdit', '/system/authors/', array(
                 'author' => $this->_Author,
-                'field' => $fields,
+                'field' => $fields, // @deprecated
+                'fields' => $fields,
+                'data' => $oldData,
                 'errors' => &$this->_errors,
+                'changing_email' => $changing_email,
+                'changing_password' => $changing_password,
             ));
+
+            // Make sure this did not change
+            $this->_Author->set('id', $author_id);
+
+            // Primary accounts are always developer, Developers can't lower their level
+            if ($this->_Author->isPrimaryAccount() || ($isOwner && Symphony::Author()->isDeveloper())) {
+                $this->_Author->set('user_type', 'developer');
+            // Manager can only change user type for author or keep existing managers
+            } elseif (Symphony::Author()->isManager()) {
+                $validUserTypes = ['author'];
+                if ($oldData['user_type'] === 'manager') {
+                    $validUserTypes[] = 'manager';
+                }
+                if (!in_array($this->_Author->get('user_type'), $validUserTypes)) {
+                    $this->_errors['user_type'] = __('The user type is invalid. You can only edit Authors.');
+                }
+            // Only developer can change user type
+            } elseif (!Symphony::Author()->isDeveloper() && $this->_Author->get('user_type') !== $oldData['user_type']) {
+                $this->_errors['user_type'] = __('The user type is invalid. You can only edit Authors.');
+            }
 
             if (empty($this->_errors) && $this->_Author->validate($this->_errors)) {
                 // Admin changing another profile
                 if (!$isOwner) {
-                    $entered_password = Symphony::Database()->cleanValue($fields['confirm-change-password']);
+                    $entered_password = $fields['confirm-change-password'];
 
                     if (!isset($fields['confirm-change-password']) || empty($fields['confirm-change-password'])) {
                         $this->_errors['confirm-change-password'] = __('Please provide your own password to make changes to this author.');
@@ -769,11 +902,13 @@ class contentSystemAuthors extends AdministrationPage
 
                 // All good, let's save the Author
                 if (is_array($this->_errors) && empty($this->_errors) && $this->_Author->commit()) {
-                    Symphony::Database()->delete('tbl_forgotpass', sprintf("
-                        `expiry` < '%s' OR `author_id` = %d",
-                        DateTimeObj::getGMT('c'),
-                        $author_id
-                    ));
+                    Symphony::Database()
+                        ->delete('tbl_forgotpass')
+                        ->where(['or' => [
+                            'expiry' => ['<' => DateTimeObj::getGMT('c')],
+                            'author_id' => $author_id,
+                        ]])
+                        ->execute();
 
                     if ($isOwner) {
                         Administration::instance()->login($this->_Author->get('username'), $this->_Author->get('password'), true);
@@ -795,11 +930,20 @@ class contentSystemAuthors extends AdministrationPage
                      *  The error array used to validate the Author, passed by reference.
                      *  Extension should append to this array if they detect saving problems.
                      *  This parameter is available @since Symphony 2.7.0
+                     * @param bool $changing_email
+                     *  @since Symphony 3.0.0
+                     *  The changing email flag, so extension can act only if the email changes.
+                     * @param bool $changing_password
+                     *  @since Symphony 3.0.0
+                     *  The changing password flag, so extension can act only if the password changes.
                      */
                     Symphony::ExtensionManager()->notifyMembers('AuthorPostEdit', '/system/authors/', array(
                         'author' => $this->_Author,
-                        'field' => $fields,
+                        'field' => $fields, // @deprecated
+                        'fields' => $fields,
                         'errors' => &$this->_errors,
+                        'changing_email' => $changing_email,
+                        'changing_password' => $changing_password,
                     ));
 
                     if (empty($this->_errors)) {
@@ -822,7 +966,7 @@ class contentSystemAuthors extends AdministrationPage
             if (is_array($this->_errors) && !empty($this->_errors)) {
                 $this->pageAlert(__('There were some problems while attempting to save. Please check below for problem fields.'), Alert::ERROR);
             }
-        } elseif (@array_key_exists('delete', $_POST['action'])) {
+        } elseif (is_array($_POST['action']) && array_key_exists('delete', $_POST['action'])) {
             // Validate rights
             if (!$canEdit) {
                 $this->pageAlert(__('You are not allowed to delete this author.'), Alert::ERROR);
@@ -830,7 +974,7 @@ class contentSystemAuthors extends AdministrationPage
             }
             // Admin changing another profile
             if (!$isOwner) {
-                $entered_password = Symphony::Database()->cleanValue($fields['confirm-change-password']);
+                $entered_password = $fields['confirm-change-password'];
 
                 if (!isset($fields['confirm-change-password']) || empty($fields['confirm-change-password'])) {
                     $this->_errors['confirm-change-password'] = __('Please provide your own password to make changes to this author.');

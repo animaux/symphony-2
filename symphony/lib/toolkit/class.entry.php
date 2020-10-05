@@ -9,9 +9,10 @@
  * Authors of Symphony and hold all the content for the website.
  * Entries are typically created from the Symphony backend, but
  * can also be created using Events from the Frontend.
+ *
+ * @since Symphony 3.0.0 it implements the ArrayAccess interface.
  */
-
-class Entry
+class Entry implements ArrayAccess
 {
     /**
      * The constant for when an Entry is ok, that is, no errors have
@@ -39,15 +40,6 @@ class Entry
      * @var array
      */
     protected $_data = array();
-
-    /**
-     * An ISO 8601 representation of when this Entry was created
-     * eg. `2004-02-12T15:19:21+00:00`
-     * @deprecated Since Symphony 2.3.1, use $entry->get('creation_date') instead. This
-     *  variable will be removed in Symphony 3.0
-     * @var string
-     */
-    public $creationDate = null;
 
     /**
      * Entries have some basic metadata settings such as the Entry ID, the Author ID
@@ -90,10 +82,55 @@ class Entry
     }
 
     /**
+     * Implementation of ArrayAccess::offsetExists()
+     *
+     * @param mixed $offset
+     * @return bool
+     */
+    public function offsetExists($offset)
+    {
+        return isset($this->_fields[$offset]);
+    }
+
+    /**
+     * Implementation of ArrayAccess::offsetGet()
+     *
+     * @param mixed $offset
+     * @return mixed
+     */
+    public function offsetGet($offset)
+    {
+        return $this->_fields[$offset];
+    }
+
+    /**
+     * Implementation of ArrayAccess::offsetSet()
+     *
+     * @param mixed $offset
+     * @param mixed $value
+     * @return void
+     */
+    public function offsetSet($offset, $value)
+    {
+        $this->_fields[$offset] = $value;
+    }
+
+    /**
+     * Implementation of ArrayAccess::offsetUnset()
+     *
+     * @param mixed $offset
+     * @return void
+     */
+    public function offsetUnset($offset)
+    {
+        unset($this->_fields[$offset]);
+    }
+
+    /**
      * Creates the initial entry row in tbl_entries and returns the resulting
      * Entry ID using `getInsertID()`.
      *
-     * @see toolkit.MySQL#getInsertID()
+     * @see toolkit.Database#getInsertID()
      * @throws DatabaseException
      * @return integer
      */
@@ -105,10 +142,14 @@ class Entry
         $fields['author_id'] = is_null($this->get('author_id')) ? 1 : (int)$this->get('author_id'); // Author_id cannot be null
         $fields['modification_author_id'] = is_null($this->get('modification_author_id')) ? $fields['author_id'] : (int)$this->get('modification_author_id');
 
-        Symphony::Database()->insert($fields, 'tbl_entries');
+        $inserted = Symphony::Database()
+            ->insert('tbl_entries')
+            ->values($fields)
+            ->execute()
+            ->success();
 
-        if (!$entry_id = Symphony::Database()->getInsertID()) {
-            return null;
+        if ($inserted && !$entry_id = Symphony::Database()->getInsertID()) {
+            return 0;
         }
 
         $this->set('id', $entry_id);
@@ -169,12 +210,12 @@ class Entry
             }
         }
 
-        $section = SectionManager::fetch($this->get('section_id'));
+        $section = (new SectionManager)->select()->section($this->get('section_id'))->execute()->next();
         $schema = $section->fetchFieldsSchema();
 
         foreach ($schema as $info) {
             $message = null;
-            $field = FieldManager::fetch($info['id']);
+            $field = (new FieldManager)->select()->field($info['id'])->execute()->next();
 
             if ($ignore_missing_fields && !isset($data[$field->get('element_name')])) {
                 continue;
@@ -184,7 +225,9 @@ class Entry
 
             if ($s !== Field::__OK__) {
                 $status = Entry::__ENTRY_FIELD_ERROR__;
-                $errors[$info['id']] = $message;
+                if (!isset($errors[$info['id']])) {
+                    $errors[$info['id']] = $message;
+                }
             }
 
             $this->setData($info['id'], $result);
@@ -192,7 +235,10 @@ class Entry
 
         // Failed to create entry, cleanup
         if ($status !== Entry::__ENTRY_OK__ && !is_null($entry_id)) {
-            Symphony::Database()->delete('tbl_entries', sprintf(" `id` = %d ", $entry_id));
+            Symphony::Database()
+                ->delete('tbl_entries')
+                ->where(['id' => $entry_id])
+                ->execute();
         }
 
         return $status;
@@ -250,12 +296,12 @@ class Entry
     public function checkPostData($data, &$errors = null, $ignore_missing_fields = false)
     {
         $status = Entry::__ENTRY_OK__;
-        $section = SectionManager::fetch($this->get('section_id'));
+        $section = (new SectionManager)->select()->section($this->get('section_id'))->execute()->next();
         $schema = $section->fetchFieldsSchema();
 
         foreach ($schema as $info) {
             $message = null;
-            $field = FieldManager::fetch($info['id']);
+            $field = (new FieldManager)->select()->field($info['id'])->execute()->next();
 
             /**
              * Prior to checking a field's post data.
@@ -275,13 +321,13 @@ class Entry
              */
             Symphony::ExtensionManager()->notifyMembers(
                 'EntryPreCheckPostFieldData',
-                class_exists('Administration', false) ? '/backend/' : '/frontend/',
-                array(
+                Symphony::getEngineNamespace(),
+                [
                     'section' => $section,
                     'field' => &$field,
                     'post_data' => &$data,
-                    'errors' => &$errors
-                )
+                    'errors' => &$errors,
+                ]
             );
 
             if ($ignore_missing_fields && !isset($data[$field->get('element_name')])) {
@@ -305,7 +351,7 @@ class Entry
      */
     public function findDefaultData()
     {
-        $section = SectionManager::fetch($this->get('section_id'));
+        $section = (new SectionManager)->select()->section($this->get('section_id'))->execute()->next();
         $schema = $section->fetchFields();
 
         foreach ($schema as $field) {
@@ -313,7 +359,8 @@ class Entry
             if (empty($field_id) || isset($this->_data[$field_id])) {
                 continue;
             }
-
+            $status = null;
+            $message = null;
             $result = $field->processRawFieldData(null, $status, $message, false, $this->get('id'));
             $this->setData($field_id, $result);
         }
@@ -331,6 +378,10 @@ class Entry
 
         if (!$this->get('author_id')) {
             $this->set('author_id', 1);
+        }
+
+        if (!$this->get('modification_author_id')) {
+            $this->set('modification_author_id', $this->get('author_id'));
         }
     }
 
@@ -373,7 +424,7 @@ class Entry
         }
 
         if (is_null($associated_sections)) {
-            $section = SectionManager::fetch($this->get('section_id'));
+            $section = (new SectionManager)->select()->section($this->get('section_id'))->execute()->next();
             $associated_sections = $section->fetchChildAssociations();
         }
 
@@ -384,7 +435,7 @@ class Entry
         $counts = array();
 
         foreach ($associated_sections as $as) {
-            $field = FieldManager::fetch($as['child_section_field_id']);
+            $field = (new FieldManager)->select()->field($as['child_section_field_id'])->execute()->next();
             $parent_section_field_id = $as['parent_section_field_id'];
 
             if (!is_null($parent_section_field_id)) {

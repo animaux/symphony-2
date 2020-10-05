@@ -21,7 +21,7 @@ abstract class EmailHelper
      */
     public static function fold($input, $max_length = 75)
     {
-        return @wordwrap($input, $max_length, "\r\n ");
+        return wordwrap($input, $max_length, "\r\n ");
     }
 
     /**
@@ -61,6 +61,11 @@ abstract class EmailHelper
     {
         // Don't encode empty strings
         if (empty($input)) {
+            return $input;
+        }
+
+        // Don't encode if all code points are in ASCII range 0-127
+        if (!preg_match('/[\\x80-\\xff]+/', $input)) {
             return $input;
         }
 

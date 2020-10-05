@@ -8,8 +8,10 @@
  * include the installation updating and uninstallation, as well as a
  * delegate subscription hook so an extension can perform custom logic
  * at various times during Symphony execution.
+ *
+ * @since Symphony 3.0.0 it implements the ArrayAccess interface.
  */
-abstract class Extension
+abstract class Extension implements ArrayAccess
 {
     /**
      * Determines that a new navigation group is to created in the Symphony backend
@@ -59,12 +61,19 @@ abstract class Extension
     /**
      * Holds an associative array of all the objects this extension provides
      * to Symphony where the key is one of the Provider constants, and the
-     * value is the name of the classname
+     * value is the name of the class name.
      *
      * @since Symphony 2.5.0
      * @var array
      */
-    private static $provides = array();
+    protected static $provides = [];
+
+    /**
+     * An associative array of basic metadata/settings for this Extension
+     * @since Symphony 3.0.0
+     * @var array
+     */
+    private $fields = [];
 
     /**
      * Default constructor for an Extension, at this time it does nothing
@@ -74,8 +83,64 @@ abstract class Extension
     }
 
     /**
+     * Implementation of ArrayAccess::offsetExists()
+     *
+     * @param mixed $offset
+     * @return bool
+     */
+    public function offsetExists($offset)
+    {
+        return isset($this->fields[$offset]);
+    }
+
+    /**
+     * Implementation of ArrayAccess::offsetGet()
+     *
+     * @param mixed $offset
+     * @return mixed
+     */
+    public function offsetGet($offset)
+    {
+        return $this->fields[$offset];
+    }
+
+    /**
+     * Implementation of ArrayAccess::offsetSet()
+     *
+     * @param mixed $offset
+     * @param mixed $value
+     * @return void
+     */
+    public function offsetSet($offset, $value)
+    {
+        $this->fields[$offset] = $value;
+    }
+
+    /**
+     * Implementation of ArrayAccess::offsetUnset()
+     *
+     * @param mixed $offset
+     * @return void
+     */
+    public function offsetUnset($offset)
+    {
+        unset($this->fields[$offset]);
+    }
+
+    /**
+     * Sets all the fields values from the database for this extension.
+     *
+     * @param array $fields
+     * @return void
+     */
+    public function setFields(array $fields)
+    {
+        $this->fields = $fields;
+    }
+
+    /**
      * Any logic that assists this extension in being installed such as
-     * table creation, checking for dependancies etc.
+     * table creation, checking for dependencies etc.
      *
      * @see toolkit.ExtensionManager#install()
      * @return boolean
@@ -91,8 +156,7 @@ abstract class Extension
      * when a user runs the 'Enable' action from the backend. The currently
      * installed version of this extension is provided so that it can be
      * compared to the current version of the extension in the file system.
-     * This is commonly done using PHP's version_compare function. Common
-     * logic done by this method is to update differences between extension
+     * Logic done by this method is to update differences between extension
      * tables.
      *
      * @see toolkit.ExtensionManager#update()
@@ -283,7 +347,7 @@ abstract class Extension
      * this is not possible through this function and rather it should be done using the
      * `NavigationPreRender` delegate.
      *
-     * @link http://github.com/symphonycms/symphony-2/blob/master/symphony/assets/xml/navigation.xml
+     * @link http://github.com/symphonycms/symphonycms/blob/master/symphony/assets/xml/navigation.xml
      * @return array
      *  An associative array of navigation items to add to the Navigation. This function
      *  defaults to returning null, which adds nothing to the Symphony navigation
@@ -316,7 +380,7 @@ abstract class Extension
      *  One of the `iProvider` constants
      * @return array
      */
-    public static function providerOf($type = null)
+    public function providerOf($type = null)
     {
         static::registerProviders();
 

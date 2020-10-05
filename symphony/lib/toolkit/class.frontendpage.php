@@ -73,6 +73,12 @@ class FrontendPage extends XSLTPage
     private $_env = array();
 
     /**
+     * Hold all the data sources that must not output their parameters in the xml.
+     * @var array
+     */
+    private $_xml_excluded_params = array();
+
+    /**
      * Constructor function sets the `$is_logged_in` variable.
      */
     public function __construct()
@@ -153,7 +159,7 @@ class FrontendPage extends XSLTPage
      * The URL of the current page that is being Rendered as returned by getCurrentPage
      * @throws Exception
      * @throws FrontendPageNotFoundException
-     * @throws SymphonyErrorPage
+     * @throws SymphonyException
      * @return string
      * The page source after the XSLT has transformed this page's XML. This would be
      * exactly the same as the 'view-source' from your browser
@@ -165,9 +171,7 @@ class FrontendPage extends XSLTPage
         $output = null;
 
         $this->addHeaderToPage('Cache-Control', 'no-cache, must-revalidate, max-age=0');
-        $this->addHeaderToPage('Expires', 'Mon, 12 Dec 1982 06:14:00 GMT');
         $this->addHeaderToPage('Last-Modified', gmdate('D, d M Y H:i:s') . ' GMT');
-        $this->addHeaderToPage('Pragma', 'no-cache');
 
         if ($this->is_logged_in) {
             /**
@@ -257,6 +261,8 @@ class FrontendPage extends XSLTPage
             $output = parent::generate();
             $this->_param = $backup_param;
 
+            Symphony::Profiler()->sample('XSLT Transformation', PROFILE_LAP);
+
             /**
              * Immediately after generating the page. Provided with string containing page source
              * @delegate FrontendOutputPostGenerate
@@ -266,8 +272,6 @@ class FrontendPage extends XSLTPage
              *  The generated output of this page, ie. a string of HTML, passed by reference
              */
             Symphony::ExtensionManager()->notifyMembers('FrontendOutputPostGenerate', '/frontend/', array('output' => &$output));
-
-            Symphony::Profiler()->sample('XSLT Transformation', PROFILE_LAP);
 
             if (is_null($devkit) && !$output) {
                 $errstr = null;
@@ -364,6 +368,7 @@ class FrontendPage extends XSLTPage
             'this-month' => $date->format('m'),
             'this-day' => $date->format('d'),
             'timezone' => $date->format('P'),
+            'timestamp' => $date->format('U'),
             'website-name' => Symphony::Configuration()->get('sitename', 'general'),
             'page-title' => $page['title'],
             'root' => URL,
@@ -417,16 +422,6 @@ class FrontendPage extends XSLTPage
             }
         }
 
-        if (is_array($_COOKIE[__SYM_COOKIE_PREFIX__]) && !empty($_COOKIE[__SYM_COOKIE_PREFIX__])) {
-            foreach ($_COOKIE[__SYM_COOKIE_PREFIX__] as $key => $val) {
-                if ($key === 'xsrf-token' && is_array($val)) {
-                    $val = key($val);
-                }
-
-                $this->_param['cookie-' . $key] = $val;
-            }
-        }
-
         // Flatten parameters:
         General::flattenArray($this->_param);
 
@@ -448,8 +443,8 @@ class FrontendPage extends XSLTPage
 
         $xml_build_start = precision_timer();
 
-        $xml = new XMLElement('data');
-        $xml->setIncludeHeader(true);
+        $xml = new XMLDocument('data');
+        $xml->renderHeader();
 
         $events = new XMLElement('events');
         $this->processEvents($page['events'], $events);
@@ -468,17 +463,15 @@ class FrontendPage extends XSLTPage
                     $p = array($p);
                 }
 
-                foreach ($p as $key => $value) {
-                    if (is_array($value) && !empty($value)) {
-                        foreach ($value as $kk => $vv) {
-                            $this->_param[$handle] .= @implode(', ', $vv) . ',';
-                        }
-                    } else {
-                        $this->_param[$handle] = @implode(', ', $p);
-                    }
+                // Check if the data source is excluded from xml output
+                $dsName = current(explode('.', $handle));
+                if ($dsName && $this->_xml_excluded_params[$dsName]) {
+                    continue;
                 }
 
-                $this->_param[$handle] = trim($this->_param[$handle], ',');
+                // Flatten and add all values
+                General::flattenArray($p);
+                $this->_param[$handle] = implode(', ', $p);
             }
         }
 
@@ -495,18 +488,18 @@ class FrontendPage extends XSLTPage
         $params = new XMLElement('params');
         foreach ($this->_param as $key => $value) {
             // To support multiple parameters using the 'datasource.field'
-            // we will pop off the field handle prior to sanitizing the
-            // key. This is because of a limitation where General::createHandle
+            // we explode the string and create handles from it parts.
+            // This is because of a limitation where Lang::createHandle()
             // will strip '.' as it's technically punctuation.
             if (strpos($key, '.') !== false) {
                 $parts = explode('.', $key);
-                $field_handle = '.' . array_pop($parts);
-                $key = implode('', $parts);
+                $key = implode('.', array_map(function ($part) {
+                    return Lang::createHandle($part);
+                }, $parts));
             } else {
-                $field_handle = '';
+                $key = Lang::createHandle($key);
             }
 
-            $key = Lang::createHandle($key) . $field_handle;
             $param = new XMLElement($key);
 
             // DS output params get flattened to a string, so get the original pre-flattened array
@@ -539,7 +532,6 @@ class FrontendPage extends XSLTPage
                '</xsl:stylesheet>';
 
         $this->setXSL($xsl, false);
-        $this->setRuntimeParam($this->_param);
 
         Symphony::Profiler()->seed($start);
         Symphony::Profiler()->sample('Page Built', PROFILE_LAP);
@@ -561,7 +553,7 @@ class FrontendPage extends XSLTPage
      * The URL of the current page that is being Rendered as returned by `getCurrentPage()`.
      * If no URL is provided, Symphony assumes the Page with the type 'index' is being
      * requested.
-     * @throws SymphonyErrorPage
+     * @throws SymphonyException
      * @return array
      *  An associative array of page details
      */
@@ -865,7 +857,7 @@ class FrontendPage extends XSLTPage
             } catch (FrontendPageNotFoundException $e) {
                 // Work around. This ensures the 404 page is displayed and
                 // is not picked up by the default catch() statement below
-                FrontendPageNotFoundExceptionHandler::render($e);
+                FrontendPageNotFoundExceptionRenderer::render($e);
             }
 
             /**
@@ -892,7 +884,12 @@ class FrontendPage extends XSLTPage
             // if the XML is still null, an extension has not run the data source, so run normally
             // This is deprecated and will be replaced by execute in Symphony 3.0.0
             if (is_null($xml)) {
-                $xml = $ds->grab($this->_env['pool']);
+                $xml = $ds->execute($this->_env['pool']);
+            }
+
+            // If the data source does not want to output its xml, keep the info for later
+            if (isset($ds->dsParamPARAMXML) && $ds->dsParamPARAMXML !== 'yes') {
+                $this->_xml_excluded_params['ds-' . $ds->dsParamROOTELEMENT] = true;
             }
 
             if ($xml) {
@@ -959,12 +956,12 @@ class FrontendPage extends XSLTPage
         }
 
         $orderedList = array();
-        $dsKeyArray = $this->__buildDatasourcePooledParamList(array_keys($dependenciesList));
+        $dsKeyArray = $this->buildDatasourcePooledParamList(array_keys($dependenciesList));
 
         // 1. First do a cleanup of each dependency list, removing non-existant DS's and find
         //    the ones that have no dependencies, removing them from the list
         foreach ($dependenciesList as $handle => $dependencies) {
-            $dependenciesList[$handle] = @array_intersect($dsKeyArray, $dependencies);
+            $dependenciesList[$handle] = array_intersect($dsKeyArray, $dependencies);
 
             if (empty($dependenciesList[$handle])) {
                 unset($dependenciesList[$handle]);
@@ -1003,7 +1000,7 @@ class FrontendPage extends XSLTPage
      * @return array
      *  An array of the handlised datasources
      */
-    private function __buildDatasourcePooledParamList($datasources)
+    private function buildDatasourcePooledParamList($datasources)
     {
         if (!is_array($datasources) || empty($datasources)) {
             return array();
